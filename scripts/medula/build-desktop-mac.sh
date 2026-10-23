@@ -13,9 +13,8 @@
 # Environment:
 #   T3_MEDULA_ENV               file sourced first (PATH for Node 24 and pnpm).
 #   T3_MEDULA_PUBLIC_CONFIG_APP an installed official .app to take the public
-#                               T3 Connect config from (default
-#                               "/Applications/T3 Code (Beta).app"); empty
-#                               skips it and Connect stays unconfigured.
+#                               T3 Connect config from instead of the
+#                               defaults in connect.env (unset: connect.env).
 #   T3CODE_MEDULA_DEFAULT_URL   Medula hub address used while the setting is
 #                               empty (the desktop page host is not the hub).
 #   T3_MEDULA_ARCH              arm64 (default) or x64.
@@ -26,6 +25,7 @@ repo=$(cd "$(dirname "$0")/../.." && pwd)
 out=${1:-${T3_MEDULA_BUILD_DIR:-$HOME/.cache/t3code-medula}}
 arch=${T3_MEDULA_ARCH:-arm64}
 cd "$repo"
+. scripts/medula/connect.env
 export PATH="$repo/node_modules/.bin:$PATH"
 mkdir -p "$out"
 out=$(cd "$out" && pwd)
@@ -45,7 +45,7 @@ trap restore EXIT
 echo "== install dependencies"
 pnpm install --frozen-lockfile
 
-config_app=${T3_MEDULA_PUBLIC_CONFIG_APP-/Applications/T3 Code (Beta).app}
+config_app=${T3_MEDULA_PUBLIC_CONFIG_APP:-}
 if [ -n "$config_app" ]; then
   echo "== public T3 Connect config from $config_app"
   config=$(node scripts/medula/public-config-from-app.mjs "$config_app")

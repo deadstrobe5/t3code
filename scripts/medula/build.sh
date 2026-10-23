@@ -18,6 +18,7 @@ set -euo pipefail
 repo=$(cd "$(dirname "$0")/../.." && pwd)
 out=${1:-${T3_MEDULA_BUILD_DIR:-$HOME/.cache/t3code-medula}}
 cd "$repo"
+. scripts/medula/connect.env
 mkdir -p "$out"
 # Upstream stamps the release version at release time, so the manifest can
 # lag behind the newest release tag this commit contains: take the higher.
