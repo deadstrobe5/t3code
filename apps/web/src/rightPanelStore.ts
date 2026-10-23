@@ -21,7 +21,7 @@ const RIGHT_PANEL_KINDS = [
   "terminal",
   "pull-request",
   "pull-requests",
-  "medula",
+  "operarios",
 ] as const;
 export type RightPanelKind = (typeof RIGHT_PANEL_KINDS)[number];
 
@@ -77,11 +77,11 @@ export type RightPanelSurface =
     }
   /** The thread's linked pull requests, one singleton tab beside any number of `pull-request` tabs. */
   | { id: "pull-requests"; kind: "pull-requests" }
-  /** The Medula hub (dashboard, live feed and idea box); see `~/medula/MedulaPanel`. */
-  | { id: "medula"; kind: "medula" };
+  /** Medula background workers; see `~/medula/MedulaWorkers`. */
+  | { id: "operarios"; kind: "operarios" };
 
 const RIGHT_PANEL_STORAGE_KEY = "t3code:right-panel-state:v2";
-const RIGHT_PANEL_STORAGE_VERSION = 14;
+const RIGHT_PANEL_STORAGE_VERSION = 15;
 
 export const PULL_REQUESTS_PANEL_REF = scopeThreadRef(
   EnvironmentId.make("pull-requests-panel"),
@@ -217,8 +217,8 @@ const singletonSurface = (
       return { id: "pull-requests", kind };
     case "device":
       return { id: "device", kind };
-    case "medula":
-      return { id: "medula", kind };
+    case "operarios":
+      return { id: "operarios", kind };
   }
 };
 
@@ -456,7 +456,7 @@ export function migratePersistedRightPanelState(persistedState: unknown): {
               const surfaces = Array.isArray(validThreadState?.surfaces)
                 ? validThreadState.surfaces.flatMap<RightPanelSurface>((surface) => {
                     const kind = (surface as { kind?: string }).kind;
-                    if (kind === "plan" || kind === "agents") return [];
+                    if (kind === "plan" || kind === "agents" || kind === "medula") return [];
                     if (
                       (surface.kind === "file" || surface.kind === "files") &&
                       "folderTrail" in surface &&

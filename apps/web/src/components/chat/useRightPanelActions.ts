@@ -138,16 +138,11 @@ export function useRightPanelActions(input: RightPanelActionsInput) {
     useRightPanelStore.getState().open(activeThreadRef, "files");
   };
   const addFilesSurfaceStable = useStableCallback(addFilesSurface);
-  const addMedulaSurface = () => {
+  const addOperariosSurface = () => {
     if (!activeThreadRef) return;
-    useRightPanelStore.getState().open(activeThreadRef, "medula");
+    useRightPanelStore.getState().open(activeThreadRef, "operarios");
   };
-  const addMedulaSurfaceStable = useStableCallback(addMedulaSurface);
-  const toggleMedulaSurface = () => {
-    if (!activeThreadRef) return;
-    useRightPanelStore.getState().toggle(activeThreadRef, "medula");
-  };
-  const toggleMedulaSurfaceStable = useStableCallback(toggleMedulaSurface);
+  const addOperariosSurfaceStable = useStableCallback(addOperariosSurface);
   const addPullRequestsSurface = () => {
     if (!activeThreadRef || !pullRequestsSurfaceAvailable) return;
     useRightPanelStore.getState().open(activeThreadRef, "pull-requests");
@@ -321,7 +316,7 @@ export function useRightPanelActions(input: RightPanelActionsInput) {
     addDeviceSurfaceStable,
     addDiffSurfaceStable,
     addFilesSurfaceStable,
-    addMedulaSurfaceStable,
+    addOperariosSurfaceStable,
     addPullRequestSurfaceStable,
     addPullRequestsSurfaceStable,
     closePreviewPanelStable,
@@ -336,6 +331,5 @@ export function useRightPanelActions(input: RightPanelActionsInput) {
     toggleRightPanelMaximizedStable,
     toggleRightPanelStable,
     toggleThreadPanelStable,
-    toggleMedulaSurfaceStable,
   };
 }
