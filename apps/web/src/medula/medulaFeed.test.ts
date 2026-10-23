@@ -12,18 +12,18 @@ const NOW = Date.parse("2026-10-23T02:00:00Z");
 describe("resolveMedulaBaseUrl", () => {
   it("defaults to the page's host on the hub port so remote browsers reach the server", () => {
     expect(resolveMedulaBaseUrl("", { protocol: "http:", hostname: "100.64.0.9" })).toBe(
-      "http://100.64.0.9:8800/",
+      "http://100.64.0.9:8801/",
     );
     expect(resolveMedulaBaseUrl("  ", { protocol: "http:", hostname: "127.0.0.1" })).toBe(
-      "http://127.0.0.1:8800/",
+      "http://127.0.0.1:8801/",
     );
   });
 
   it("falls back to loopback outside a web page", () => {
     expect(resolveMedulaBaseUrl("", { protocol: "t3:", hostname: "" })).toBe(
-      "http://127.0.0.1:8800/",
+      "http://127.0.0.1:8801/",
     );
-    expect(resolveMedulaBaseUrl("", null)).toBe("http://127.0.0.1:8800/");
+    expect(resolveMedulaBaseUrl("", null)).toBe("http://127.0.0.1:8801/");
   });
 
   it("keeps an explicit URL and adds the trailing slash relative paths need", () => {
