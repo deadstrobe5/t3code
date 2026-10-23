@@ -5,6 +5,7 @@ import { memo, type ReactElement, type ReactNode } from "react";
 
 import { cn } from "~/lib/utils";
 
+import { MedulaToggle } from "~/medula/MedulaToggle";
 import type { ThreadPanelPresentation } from "../../rightPanelLayout";
 import { PopoverCreateHandle, PopoverTrigger } from "../ui/popover";
 import { Toggle } from "../ui/toggle";
@@ -28,6 +29,9 @@ export interface PanelLayoutControlsProps {
   onToggleTerminal: () => void;
   onToggleThreadPanel: () => void;
   onToggleRightPanel: () => void;
+  /** Present where the Medula panel can open; it rides with the right-panel control. */
+  medulaOpen?: boolean;
+  onToggleMedula?: () => void;
 }
 
 export const PanelLayoutControls = memo(function PanelLayoutControls({
@@ -48,6 +52,8 @@ export const PanelLayoutControls = memo(function PanelLayoutControls({
   onToggleTerminal,
   onToggleThreadPanel,
   onToggleRightPanel,
+  medulaOpen = false,
+  onToggleMedula,
 }: PanelLayoutControlsProps) {
   const threadPanelToggle = (
     <Toggle
@@ -78,6 +84,9 @@ export const PanelLayoutControls = memo(function PanelLayoutControls({
       className="flex h-full shrink-0 items-center gap-1 [-webkit-app-region:no-drag]"
       data-panel-layout-controls
     >
+      {showRightPanelControl && onToggleMedula && rightPanelAvailable ? (
+        <MedulaToggle open={medulaOpen} onToggle={onToggleMedula} />
+      ) : null}
       {showThreadPanelControl
         ? threadPanelPresentation === "popover"
           ? threadPanelTooltip(

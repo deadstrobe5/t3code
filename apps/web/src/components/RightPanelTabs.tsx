@@ -92,6 +92,8 @@ import { PierreEntryIcon } from "./chat/PierreEntryIcon";
 import { resolvePullRequestState } from "./pullRequest/pullRequestPresentation";
 import { PullRequestGlyph } from "~/components/pullRequest/pullRequestIcons";
 import { observeResize } from "~/lib/observeResize";
+import { MedulaIcon } from "~/medula/MedulaPanel";
+import { MEDULA_DEFAULT_TITLE, useMedulaStore } from "~/medula/medulaStore";
 
 export interface RightPanelTabsProps {
   mode: PreviewPanelMode;
@@ -137,6 +139,8 @@ export interface RightPanelTabsProps {
   onAddPullRequest: () => void;
   onAddPullRequests: () => void;
   onAddDevice: () => void;
+  /** Absent where the Medula panel has no place, such as the pull-request list. */
+  onAddMedula?: () => void;
   browserAvailable: boolean;
   terminalAvailable: boolean;
   diffAvailable: boolean;
@@ -170,6 +174,7 @@ const SURFACE_DISABLED_REASONS = {
   pullRequest: "This thread's branch has no pull request yet.",
   pullRequests: "No linked pull requests are available for this thread.",
   device: "Devices are only available from a thread.",
+  medula: "Turn the Medula panel on in Settings.",
 } as const;
 
 // Closed keepMounted popups must stop blocking shortcuts once their exit transition ends.
@@ -194,6 +199,7 @@ const SURFACE_UNAVAILABLE_HINTS = {
   pullRequest: "No pull request on this branch yet.",
   pullRequests: "No linked pull requests available.",
   device: "Available from a thread.",
+  medula: "Turn it on in Settings.",
 } as const;
 
 type TabContextMenuAction =
@@ -315,6 +321,8 @@ function RightPanelEmptyState(props: {
   onAddPullRequest: () => void;
   onAddPullRequests: () => void;
   onAddDevice: () => void;
+  /** Absent where the Medula panel has no place, such as the pull-request list. */
+  onAddMedula?: () => void;
   browserAvailable: boolean;
   terminalAvailable: boolean;
   diffAvailable: boolean;
@@ -324,6 +332,8 @@ function RightPanelEmptyState(props: {
   deviceAvailable: boolean;
 }) {
   const [highlight, setHighlight] = useState(-1);
+  const medulaEnabled = useMedulaStore((state) => state.enabled);
+  const medulaTitle = useMedulaStore((state) => state.title.trim() || MEDULA_DEFAULT_TITLE);
 
   const actions = [
     {
@@ -382,6 +392,14 @@ function RightPanelEmptyState(props: {
       available: props.deviceAvailable,
       disabledReason: SURFACE_UNAVAILABLE_HINTS.device,
       onClick: props.onAddDevice,
+    },
+    {
+      label: medulaTitle,
+      icon: MedulaIcon,
+      shortcut: "H",
+      available: medulaEnabled && props.onAddMedula !== undefined,
+      disabledReason: SURFACE_UNAVAILABLE_HINTS.medula,
+      onClick: () => props.onAddMedula?.(),
     },
   ] as const;
 
@@ -565,6 +583,8 @@ function surfaceTitle(
       return `#${surface.number}`;
     case "pull-requests":
       return "Pull requests";
+    case "medula":
+      return useMedulaStore.getState().title.trim() || MEDULA_DEFAULT_TITLE;
     case "device":
       return surface.title ?? surface.target?.name ?? "Device";
     case "preview": {
@@ -655,6 +675,8 @@ function SurfaceIcon({
       );
     case "pull-requests":
       return <PullRequestGlyph.link className="size-3 shrink-0" />;
+    case "medula":
+      return <MedulaIcon className="size-3 shrink-0" />;
     case "device":
       return surface.target?.platform === "ios" ? (
         <AppleIcon className="size-3 shrink-0" />
@@ -1027,6 +1049,8 @@ export function RightPanelTabs(props: RightPanelTabsProps) {
     });
   };
 
+  const medulaEnabled = useMedulaStore((state) => state.enabled);
+  const medulaTitle = useMedulaStore((state) => state.title.trim() || MEDULA_DEFAULT_TITLE);
   const addSurfaceActions = [
     {
       label: "Browser",
@@ -1083,6 +1107,14 @@ export function RightPanelTabs(props: RightPanelTabsProps) {
       available: props.deviceAvailable,
       disabledReason: SURFACE_DISABLED_REASONS.device,
       onClick: props.onAddDevice,
+    },
+    {
+      label: medulaTitle,
+      icon: MedulaIcon,
+      shortcut: "H",
+      available: medulaEnabled && props.onAddMedula !== undefined,
+      disabledReason: SURFACE_DISABLED_REASONS.medula,
+      onClick: () => props.onAddMedula?.(),
     },
   ] as const;
 
@@ -1457,6 +1489,7 @@ export function RightPanelTabs(props: RightPanelTabsProps) {
             onAddPullRequest={props.onAddPullRequest}
             onAddPullRequests={props.onAddPullRequests}
             onAddDevice={props.onAddDevice}
+            {...(props.onAddMedula ? { onAddMedula: props.onAddMedula } : {})}
             browserAvailable={props.browserAvailable}
             terminalAvailable={props.terminalAvailable}
             diffAvailable={props.diffAvailable}
