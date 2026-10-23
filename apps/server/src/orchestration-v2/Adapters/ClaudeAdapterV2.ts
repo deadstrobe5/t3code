@@ -137,7 +137,7 @@ import {
 } from "../../claudeModelOptions.ts";
 import * as ServerConfig from "../../config.ts";
 import * as ServerSettings from "../../serverSettings.ts";
-import { AdoptableSessions } from "../../medula/adoptableSessions.ts";
+import { AdoptableSessions, inputStalledMessage } from "../../medula/adoptableSessions.ts";
 import { expandHomePath } from "@t3tools/provider-core/server/pathExpansion";
 import { spawnAndCollect } from "@t3tools/provider-core/server/snapshotProbe";
 import { signalProcessGroup } from "@t3tools/provider-core/server/processGroup";
@@ -7042,6 +7042,9 @@ export const makeClaudeAdapterV2 = Effect.fn("makeClaudeAdapterV2")(function* (
                     failure: makeProviderFailure({
                       cause: cause === undefined ? undefined : Cause.squash(cause),
                       class: "transport_error",
+                      // Medula: a message the CLI never read says so in the chat.
+                      message:
+                        cause === undefined ? undefined : inputStalledMessage(Cause.squash(cause)),
                     }),
                   }),
             });

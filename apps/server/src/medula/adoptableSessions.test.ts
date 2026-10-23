@@ -22,9 +22,12 @@ import {
   AdoptableSessions,
   adoptionPrompt,
   cliStatus,
+  INPUT_STALLED_MESSAGE,
+  inputStalledMessage,
   processAlive,
   releaseAll,
   resetReleaseForTests,
+  setDeliveryStallForTests,
   UNADOPTED_IDLE_LIMIT_MS,
 } from "./adoptableSessions.ts";
 
@@ -70,6 +73,39 @@ function fakeClaudeCli(dir: string): string {
   NodeFS.writeFileSync(cli, `${script}\n`, { mode: 0o755 });
   return cli;
 }
+
+/** A CLI that answers `initialize` and then never reads its input again. */
+function deafClaudeCli(dir: string): string {
+  const cli = NodePath.join(dir, "claude-deaf");
+  const script = [
+    "#!/bin/sh",
+    'dir=$(dirname "$0")',
+    'echo $$ >> "$dir/launches"',
+    "IFS= read -r line",
+    `id=$(printf '%s' "$line" | sed -n 's/.*"request_id":"\\([^"]*\\)".*/\\1/p')`,
+    `printf '{"type":"control_response","response":{"subtype":"success","request_id":"%s","response":{"commands":[],"models":[]}}}\\n' "$id"`,
+    "exec sleep 600",
+  ].join("\n");
+  NodeFS.writeFileSync(cli, `${script}\n`, { mode: 0o755 });
+  return cli;
+}
+
+/** A user message with a pasted image of `bytes` bytes (300 kB: a screenshot, more than a FIFO holds). */
+const imageMessage = (bytes = 300_000) =>
+  ({
+    type: "user",
+    message: {
+      role: "user",
+      content: [
+        { type: "text", text: "what do I answer?" },
+        {
+          type: "image",
+          source: { type: "base64", media_type: "image/png", data: "A".repeat(bytes) },
+        },
+      ],
+    },
+    parent_tool_use_id: null,
+  }) as never;
 
 const runnerLayer = (baseDir: string) =>
   layerQueryRunner.pipe(
@@ -197,6 +233,75 @@ describe.skipIf(HostProcess.Platform.defaultValue() === "win32")(
           // Server B closed the session normally, so the CLI is stopped now.
           yield* Effect.sleep("3 seconds");
           assert.isFalse(processAlive(pid!, null), "closing the adopted session stops the CLI");
+        }),
+      20_000,
+    );
+
+    it.live(
+      "a pasted image, larger than the FIFO's buffer, reaches the CLI and gets its answer",
+      () =>
+        Effect.gen(function* () {
+          const base = NodeFS.mkdtempSync(NodePath.join(NodeOS.tmpdir(), "t3-adopt-image-"));
+          const cli = fakeClaudeCli(base);
+          NodeFS.writeFileSync(NodePath.join(base, "go1"), "");
+          NodeFS.writeFileSync(NodePath.join(base, "go2"), "");
+          yield* Effect.addFinalizer(() =>
+            Effect.sync(() => {
+              for (const pid of launches(base)) {
+                try {
+                  process.kill(pid, "SIGKILL");
+                } catch {}
+              }
+              NodeFS.rmSync(base, { recursive: true, force: true });
+            }),
+          );
+          const seen = yield* Effect.scoped(
+            Effect.gen(function* () {
+              const session = yield* openSession(cli, { sessionId: SESSION_ID });
+              yield* session.offer(imageMessage());
+              return Array.from(
+                yield* session.messages.pipe(
+                  Stream.takeUntil((message) => message.type === "result"),
+                  Stream.runCollect,
+                ),
+              );
+            }).pipe(Effect.provide(runnerLayer(base))),
+          );
+          assert.deepEqual(texts(seen), ["step 1", "step 2", "step 3", "result:done"]);
+        }),
+      20_000,
+    );
+
+    it.live(
+      "a CLI that stops reading its input fails the turn with an error instead of working forever",
+      () =>
+        Effect.gen(function* () {
+          const base = NodeFS.mkdtempSync(NodePath.join(NodeOS.tmpdir(), "t3-adopt-deaf-"));
+          const cli = deafClaudeCli(base);
+          setDeliveryStallForTests(500);
+          yield* Effect.addFinalizer(() =>
+            Effect.sync(() => {
+              setDeliveryStallForTests();
+              for (const pid of launches(base)) {
+                try {
+                  process.kill(pid, "SIGKILL");
+                } catch {}
+              }
+              NodeFS.rmSync(base, { recursive: true, force: true });
+            }),
+          );
+          const failure = yield* Effect.scoped(
+            Effect.gen(function* () {
+              const session = yield* openSession(cli, { sessionId: SESSION_ID });
+              // More than the FIFO, `cat` and the pipe behind it hold together.
+              yield* session.offer(imageMessage(3_000_000));
+              return yield* session.messages.pipe(Stream.runDrain, Effect.flip);
+            }).pipe(Effect.provide(runnerLayer(base))),
+          );
+          // What the adapter turns into the failed turn's message in the chat.
+          assert.equal(inputStalledMessage(failure), INPUT_STALLED_MESSAGE);
+          const [pid] = launches(base);
+          assert.isFalse(processAlive(pid!, null), "the CLI that stopped reading was stopped");
         }),
       20_000,
     );
