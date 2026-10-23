@@ -24,6 +24,7 @@ import {
   useMedulaBaseUrl,
   useMedulaStore,
 } from "./medulaStore";
+import { MedulaWorkers } from "./MedulaWorkers";
 
 export const MEDULA_BLOCK_LABELS: Record<MedulaBlock, string> = {
   ideias: "Ideias",
@@ -292,6 +293,8 @@ export function MedulaPanel({ visible }: { visible: boolean }) {
           <HubFrame baseUrl={baseUrl} title={title} reloadKey={reloadKey} />
         </Section>
       ) : null}
+
+      <MedulaWorkers visible={visible} />
 
       <Section className="flex-[2]">
         <div className="flex shrink-0 flex-wrap items-center gap-1.5 px-2 py-1.5">

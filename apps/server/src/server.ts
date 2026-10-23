@@ -715,6 +715,8 @@ const layerMakeRoutes = Layer.mergeAll(
     ),
     ServerHttp.layerOtlpTracesProxyRoute,
     ServerHttp.layerAssetRoute,
+    ServerHttp.layerMedulaWorkersRoute,
+    ServerHttp.layerMedulaWorkerLogRoute,
     ServerHttp.layerAttachmentUploadRoute,
     GuestHttp.layer,
     DeviceHubProxy.layer,
