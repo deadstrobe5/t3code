@@ -47,6 +47,7 @@ const configuredDesktopUpdateRepository =
   process.env.T3CODE_DESKTOP_UPDATE_REPOSITORY?.trim() ||
   process.env.GITHUB_REPOSITORY?.trim() ||
   "";
+const configuredMedulaDefaultUrl = process.env.T3CODE_MEDULA_DEFAULT_URL?.trim() || "";
 const configuredHostedAppUrl = (() => {
   const explicitHostedAppUrl = process.env.VITE_HOSTED_APP_URL?.trim();
   if (explicitHostedAppUrl) {
@@ -252,6 +253,7 @@ export default defineConfig(() => {
         configuredDesktopUpdateRepository,
       ),
       "import.meta.env.APP_VERSION": JSON.stringify(configuredAppVersion),
+      "import.meta.env.VITE_MEDULA_DEFAULT_URL": JSON.stringify(configuredMedulaDefaultUrl),
     },
     resolve: {
       tsconfigPaths: true,

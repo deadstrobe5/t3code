@@ -2765,8 +2765,12 @@ export function resolveDesktopUpdateChannel(version: string): "latest" | "nightl
   return /-nightly\.\d{8}\.\d+$/.test(version) ? "nightly" : "latest";
 }
 
+// Fork builds (`-medula.<timestamp>`) ship without an update feed, like PR and preview
+// builds, so an upstream release never replaces them.
 export function isDesktopPreviewVersion(version: string): boolean {
-  return /-pr\./.test(version) || /-preview\.\d{8}\.\d+$/.test(version);
+  return (
+    /-pr\./.test(version) || /-preview\.\d{8}\.\d+$/.test(version) || /-medula\.\d+$/.test(version)
+  );
 }
 
 export function resolveDesktopWebAssetBrand(version: string): WebAssetBrand {
