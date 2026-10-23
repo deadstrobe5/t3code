@@ -44,6 +44,7 @@ import * as AgentAwarenessRelay from "./relay/AgentAwarenessRelay.ts";
 import * as ServerLifecycleEvents from "./serverLifecycleEvents.ts";
 import * as ServerSettings from "./serverSettings.ts";
 import { forkParked, forkParkedFiber } from "./serverActivation.ts";
+import { reattachAdoptableSessions } from "./medula/adoptionReactor.ts";
 import * as AnalyticsService from "./telemetry/AnalyticsService.ts";
 import { getServerOwners } from "./telemetry/Identify.ts";
 import * as ServerEnvironment from "./environment/ServerEnvironment.ts";
@@ -572,6 +573,13 @@ const make = Effect.fn("serverRuntimeStartup.make")(function* (options?: Startup
       ).pipe(Effect.map((targets): AutoBootstrapWelcomeTargets => targets)),
     });
     yield* Effect.logInfo("V2 orchestration recovery completed", recovery);
+    // Medula: threads whose Claude CLI outlived the previous server.
+    yield* runStartupPhase("medula.adoptable-sessions", reattachAdoptableSessions).pipe(
+      Effect.catch((cause) =>
+        Effect.logWarning("Failed to reattach adoptable sessions", { cause }),
+      ),
+      forkParked,
+    );
     // Runs after activation: the status check fetches every enabled project's
     // remote, and awaiting it here held command readiness for that long.
     yield* runStartupPhase(
