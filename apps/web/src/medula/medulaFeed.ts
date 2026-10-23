@@ -39,14 +39,22 @@ function asBlock(value: unknown): MedulaBlock | null {
 }
 
 /**
- * The hub base URL with a trailing slash. An empty setting means "this page's host on the default
- * port", so a browser on another machine reaches the hub on the server, not on itself.
+ * Hub address baked in at build time (T3CODE_MEDULA_DEFAULT_URL), for clients such as the desktop
+ * app whose page host is not the machine running the hub. Empty in ordinary builds.
+ */
+const MEDULA_BUILD_DEFAULT_URL: string =
+  (import.meta.env.VITE_MEDULA_DEFAULT_URL as string | undefined)?.trim() ?? "";
+
+/**
+ * The hub base URL with a trailing slash. An empty setting means the build's default hub, or else
+ * "this page's host on the default port", so a browser on another machine reaches the hub on the
+ * server, not on itself.
  */
 export function resolveMedulaBaseUrl(
   setting: string,
   location: Pick<Location, "protocol" | "hostname"> | null,
 ): string {
-  const trimmed = setting.trim();
+  const trimmed = setting.trim() || MEDULA_BUILD_DEFAULT_URL;
   if (trimmed.length > 0) {
     try {
       const url = new URL(trimmed);
