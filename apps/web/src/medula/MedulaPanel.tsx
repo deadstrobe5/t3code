@@ -24,7 +24,7 @@ import {
   useMedulaBaseUrl,
   useMedulaStore,
 } from "./medulaStore";
-import { MedulaContext } from "./MedulaContext";
+import { MedulaContext } from "./MedulaContextPanel";
 import { MedulaResumeStrip } from "./MedulaResumeStrip";
 import { MedulaWorkers } from "./MedulaWorkers";
 
