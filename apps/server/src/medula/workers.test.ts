@@ -53,7 +53,16 @@ describe("parseWorker", () => {
       startedAt: "2026-10-23T03:10:37+01:00",
       endedAt: null,
       summary: null,
+      t3ThreadId: null,
     });
+  });
+  it("reads the T3 child thread of a delegated operário", () => {
+    const worker = parseWorker(
+      { id: "O-9", estado: "a-correr", t3: { taskId: "node:1", childThreadId: "thread:c" } },
+      "O-9",
+      null,
+    );
+    expect(worker?.t3ThreadId).toBe("thread:c");
   });
   it("rejects unsafe ids and non-objects", () => {
     expect(parseWorker({ id: "../x" }, "x", null)).toBeNull();
@@ -65,7 +74,14 @@ describe("parseWorker", () => {
 
 describe("sortWorkers", () => {
   it("puts running workers first, then newest", () => {
-    const base = { title: "", model: null, idea: null, endedAt: null, summary: null };
+    const base = {
+      title: "",
+      model: null,
+      idea: null,
+      endedAt: null,
+      summary: null,
+      t3ThreadId: null,
+    };
     const sorted = sortWorkers([
       { ...base, id: "a", state: "acabou", startedAt: "2026-10-23T03:00:00Z" },
       { ...base, id: "b", state: "a-correr", startedAt: "2026-10-23T01:00:00Z" },

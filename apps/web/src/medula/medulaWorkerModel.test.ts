@@ -16,6 +16,7 @@ const worker = (overrides: Partial<MedulaWorker>): MedulaWorker => ({
   startedAt: "2026-10-23T03:00:00+01:00",
   endedAt: null,
   summary: null,
+  t3ThreadId: null,
   ...overrides,
 });
 

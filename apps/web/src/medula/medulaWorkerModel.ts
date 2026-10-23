@@ -11,6 +11,8 @@ export interface MedulaWorker {
   readonly startedAt: string | null;
   readonly endedAt: string | null;
   readonly summary: string | null;
+  /** Set when the operário runs as a T3 delegated task: its child thread. */
+  readonly t3ThreadId?: string | null;
 }
 
 export interface MedulaWorkerList {
