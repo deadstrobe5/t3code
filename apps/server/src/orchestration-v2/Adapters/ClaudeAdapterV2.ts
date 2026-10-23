@@ -139,6 +139,7 @@ import {
 } from "../../claudeModelOptions.ts";
 import * as ServerConfig from "../../config.ts";
 import * as ServerSettings from "../../serverSettings.ts";
+import { AdoptableSessions } from "../../medula/adoptableSessions.ts";
 import { expandHomePath } from "@t3tools/provider-core/server/pathExpansion";
 import { spawnAndCollect } from "@t3tools/provider-core/server/snapshotProbe";
 import { signalProcessGroup } from "@t3tools/provider-core/server/processGroup";
@@ -903,6 +904,18 @@ export const layerQueryRunner: Layer.Layer<
     const agentScope = yield* AgentScope;
     const platform = yield* HostProcess.Platform;
     const runFork = Effect.runForkWith(yield* Effect.context<never>());
+    // Medula: CLIs that outlive a server restart (medula/adoptableSessions.ts).
+    const serverConfig = yield* Effect.serviceOption(ServerConfig.ServerConfig);
+    const adoptable =
+      serverConfig._tag === "Some" && AdoptableSessions.enabled(process.env, platform)
+        ? new AdoptableSessions(serverConfig.value.stateDir)
+        : undefined;
+    if (adoptable !== undefined) {
+      const swept = yield* Effect.sync(() => adoptable.sweep());
+      if (swept.live + swept.stopped + swept.removed > 0) {
+        yield* Effect.logInfo("orchestration-v2.claude-adoptable-sessions", swept);
+      }
+    }
 
     return ClaudeAgentSdkQueryRunner.of({
       allocateSessionId: crypto
@@ -929,16 +942,49 @@ export const layerQueryRunner: Layer.Layer<
         const { mcpServers, ...queryOptions } = input.options;
         // The SDK can prepend a scope wrapper to native binaries; script entries run through node.
         const binaryPath = queryOptions.pathToClaudeCodeExecutable;
+        const nativeBinary =
+          binaryPath !== undefined &&
+          !CLAUDE_SCRIPT_EXTENSIONS.some((ext) => binaryPath.endsWith(ext));
+        // Medula: a CLI the previous server left running for this session is
+        // attached as it is; otherwise the CLI starts behind the adoptable shim.
+        const claudeSessionId = queryOptions.resume ?? queryOptions.sessionId;
+        const adoptableSessions =
+          adoptable !== undefined &&
+          nativeBinary &&
+          queryOptions.spawnClaudeCodeProcess === undefined
+            ? adoptable
+            : undefined;
+        const found =
+          adoptableSessions === undefined
+            ? undefined
+            : yield* Effect.sync(() =>
+                adoptableSessions.findAdoptable(input.threadId, claudeSessionId),
+              );
+        const adoptableLaunch =
+          adoptableSessions === undefined || found !== undefined
+            ? undefined
+            : yield* Effect.try({
+                try: () => adoptableSessions.prepare(input.threadId, claudeSessionId),
+                catch: (cause) => queryRunnerError(cause, "prepareAdoptableSession"),
+              });
+        if (found !== undefined) {
+          yield* Effect.logInfo("orchestration-v2.claude-session-adopted", {
+            threadId: input.threadId,
+            pid: found.state.pid,
+            offset: found.state.offset,
+          });
+        }
         const launch =
-          binaryPath === undefined ||
-          CLAUDE_SCRIPT_EXTENSIONS.some((ext) => binaryPath.endsWith(ext))
+          !nativeBinary || found !== undefined
             ? undefined
             : yield* agentScope.wrap({
-                command: binaryPath,
-                args: [],
+                command: adoptableLaunch?.command ?? binaryPath,
+                args: adoptableLaunch === undefined ? [] : [...adoptableLaunch.args, binaryPath],
                 name: "claude",
                 threadId: input.threadId,
                 env: queryOptions.env,
+                // The next server adopts it, so its own startup must not stop it.
+                survivesRestart: adoptableLaunch !== undefined,
               });
         const options =
           launch === undefined || launch.args.length === 0
@@ -953,11 +999,15 @@ export const layerQueryRunner: Layer.Layer<
           unit === undefined ? undefined : () => void runFork(agentScope.stop(unit));
         // Windows has no process groups, so there the SDK spawns the CLI itself.
         const spawnClaudeCodeProcess =
-          options.spawnClaudeCodeProcess ??
-          (platform === "win32"
-            ? undefined
-            : (spawnOptions: ClaudeSpawnOptions) =>
-                spawnClaudeProcessGroup(spawnOptions, stopScope));
+          found !== undefined && adoptableSessions !== undefined
+            ? () => adoptableSessions.adopt(found)
+            : adoptableLaunch !== undefined
+              ? adoptableLaunch.spawn
+              : (options.spawnClaudeCodeProcess ??
+                (platform === "win32"
+                  ? undefined
+                  : (spawnOptions: ClaudeSpawnOptions) =>
+                      spawnClaudeProcessGroup(spawnOptions, stopScope)));
         const queryRuntime = yield* Effect.uninterruptibleMask((restore) =>
           Effect.try({
             try: () =>
