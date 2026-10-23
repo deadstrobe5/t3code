@@ -5,7 +5,7 @@ import {
   medulaWorkerElapsedMs,
   medulaWorkerTone,
   type MedulaWorker,
-} from "./medulaWorkers";
+} from "./medulaWorkerModel";
 
 const worker = (overrides: Partial<MedulaWorker>): MedulaWorker => ({
   id: "O-1",
