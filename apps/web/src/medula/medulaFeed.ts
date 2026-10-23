@@ -1,7 +1,7 @@
 /**
  * Pure helpers for the Medula panel: where the hub lives and how its live feed reads.
  *
- * The hub is an external dashboard (default port 8800 on the host serving this page). Its
+ * The hub is an external dashboard (default port 8801 on the host serving this page). Its
  * `/api/eventos` stream carries three blocks: ideias (work requests), pensamentos (what the lead
  * agent is thinking) and mordomo (follow-up digests). The stream format is deliberately read
  * loosely so the hub can evolve: a named SSE event per block, a `bloco` field on each item, or a
@@ -11,7 +11,7 @@
 export const MEDULA_BLOCKS = ["ideias", "pensamentos", "mordomo"] as const;
 export type MedulaBlock = (typeof MEDULA_BLOCKS)[number];
 
-export const MEDULA_DEFAULT_PORT = 8800;
+export const MEDULA_DEFAULT_PORT = 8801;
 export const MEDULA_MAX_ITEMS = 300;
 
 export interface MedulaItem {
