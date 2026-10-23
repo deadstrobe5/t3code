@@ -19,7 +19,7 @@ import {
   writeMedulaContextSeenAt,
   type MedulaContextResponse,
 } from "./medulaContext";
-import { getPrimaryJson } from "./medulaWorkers";
+import { getPrimaryJson } from "./medulaWorkerModel";
 
 interface MedulaContextState {
   /** Server thread of the primary environment shown in the chat; null otherwise. */

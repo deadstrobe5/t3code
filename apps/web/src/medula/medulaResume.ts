@@ -1,6 +1,6 @@
 import { useEffect, useState } from "react";
 
-import { getPrimaryJson } from "./medulaWorkers";
+import { getPrimaryJson } from "./medulaWorkerModel";
 
 /** Mirrors `apps/server/src/medula/autoResume.ts`. */
 export interface MedulaResumeStatus {
