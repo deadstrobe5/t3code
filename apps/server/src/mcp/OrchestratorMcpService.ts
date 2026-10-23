@@ -150,6 +150,14 @@ export interface OrchestratorMcpServiceShape {
     scope: McpInvocationScope,
     taskId: NodeId,
   ) => Effect.Effect<OrchestratorMcpDelegateTaskResult, OrchestratorMcpFailure>;
+  /**
+   * task_status without acknowledging a terminal result, so an outside reader
+   * (the medula operários) never swallows the parent's completion wake.
+   */
+  readonly peekTask: (
+    scope: McpInvocationScope,
+    taskId: NodeId,
+  ) => Effect.Effect<OrchestratorMcpDelegateTaskResult, OrchestratorMcpFailure>;
   readonly cancelTask: (
     scope: McpInvocationScope,
     input: OrchestratorMcpTaskCancelInput,
@@ -2324,6 +2332,10 @@ const make = Effect.gen(function* () {
     taskStatus: Effect.fn("OrchestratorMcpService.taskStatus")(function* (callerScope, taskId) {
       const scope = yield* requireThreadScope(callerScope, "task_status");
       return yield* readTask(scope, taskId, false, true);
+    }),
+    peekTask: Effect.fn("OrchestratorMcpService.peekTask")(function* (callerScope, taskId) {
+      const scope = yield* requireThreadScope(callerScope, "task_status");
+      return yield* readTask(scope, taskId);
     }),
     cancelTask: Effect.fn("OrchestratorMcpService.cancelTask")(function* (callerScope, input) {
       const scope = yield* requireThreadScope(callerScope, "task_cancel");

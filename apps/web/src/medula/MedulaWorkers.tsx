@@ -1,8 +1,12 @@
-import { ChevronRight, Cpu } from "lucide-react";
+import { useAtomValue } from "@effect/atom-react";
+import type { ThreadId } from "@t3tools/contracts";
+import { Link } from "@tanstack/react-router";
+import { ChevronRight, Cpu, MessagesSquare } from "lucide-react";
 import { useEffect, useState, useSyncExternalStore } from "react";
 
 import { ScrollArea } from "~/components/ui/scroll-area";
 import { cn } from "~/lib/utils";
+import { primaryEnvironmentIdAtom } from "~/state/primaryEnvironment";
 
 import {
   fetchMedulaWorkerLog,
@@ -103,8 +107,9 @@ function WorkerRow({
 }) {
   const elapsed = medulaWorkerElapsedMs(worker, now);
   const tone = medulaWorkerTone(worker.state);
+  const environmentId = useAtomValue(primaryEnvironmentIdAtom);
   return (
-    <li>
+    <li className="group relative">
       <button
         type="button"
         aria-expanded={open}
@@ -137,7 +142,20 @@ function WorkerRow({
             .filter(Boolean)
             .join(" · ")}
         </span>
+        {worker.t3ThreadId ? <span className="w-5 shrink-0" aria-hidden /> : null}
       </button>
+      {worker.t3ThreadId && environmentId ? (
+        // A delegated operário: its own T3 thread, also listed among this thread's agents.
+        <Link
+          to="/$environmentId/$threadId"
+          params={{ environmentId, threadId: worker.t3ThreadId as ThreadId }}
+          title="T3 · abrir o thread do operário"
+          aria-label={`Abrir o thread de ${worker.id} no T3`}
+          className="absolute top-1 right-2 rounded-sm p-0.5 text-muted-foreground hover:bg-accent hover:text-foreground focus-visible:outline-2 focus-visible:outline-ring"
+        >
+          <MessagesSquare aria-hidden className="size-3.5" />
+        </Link>
+      ) : null}
       {open ? <WorkerLog id={worker.id} visible={visible} /> : null}
     </li>
   );

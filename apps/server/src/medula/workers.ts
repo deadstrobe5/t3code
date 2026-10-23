@@ -29,6 +29,8 @@ export interface MedulaWorker {
   readonly startedAt: string | null;
   readonly endedAt: string | null;
   readonly summary: string | null;
+  /** The T3 thread of an operário launched as a delegated task (`t3.childThreadId`). */
+  readonly t3ThreadId: string | null;
 }
 
 export interface MedulaWorkerLog {
@@ -66,6 +68,11 @@ export function parseWorker(
   const id = str(record.id) ?? fallbackId;
   if (!isValidWorkerId(id)) return null;
   const summary = str(record.saida) ?? str(record.motivo) ?? str(record.nota);
+  const t3 = record.t3;
+  const t3ThreadId =
+    typeof t3 === "object" && t3 !== null
+      ? str((t3 as Record<string, unknown>).childThreadId)
+      : null;
   return {
     id,
     title: briefTitle ?? str(record.titulo) ?? str(record.title) ?? id,
@@ -75,6 +82,7 @@ export function parseWorker(
     startedAt: str(record.t),
     endedAt: str(record.t_fim),
     summary: summary && summary.length > 400 ? `${summary.slice(0, 399)}…` : summary,
+    t3ThreadId,
   };
 }
 
