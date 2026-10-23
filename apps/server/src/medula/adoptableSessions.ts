@@ -56,14 +56,20 @@ const STATE_WRITE_DELAY_MS = 300;
 const STATUS_TAIL_BYTES = 8 * 1024 * 1024;
 
 /**
- * What the next server tells an agent whose CLI it adopted. A busy CLI
- * folds it into the turn it is running, so it must not change that turn's
- * answer. Upstream's restart prompts ("Continue where you left off", "this
- * background work was cancelled") are false for an adopted CLI, so they are
- * replaced with this.
+ * What the next server tells an agent whose CLI it adopted while a turn was
+ * in progress. The CLI folds it into that turn, so it must not change the
+ * turn's answer. An idle CLI (its last event was a result) gets no prompt at
+ * all: anything sent there would start a new turn and a new answer. Upstream's
+ * restart prompts ("Continue where you left off", "this background work was
+ * cancelled") are false for an adopted CLI, so they are replaced with this.
  */
 export const ADOPTION_PROMPT =
-  "Note from T3 Code: the server restarted, but your process kept running and nothing was lost. Ignore this note and carry on exactly as you were. If you had already finished, repeat your last answer.";
+  "Note from T3 Code: the server restarted, but your process kept running and nothing was lost. Ignore this note and continue the current turn. Do not restate anything you already said.";
+
+/** The prompt an adopted CLI gets: none when it is idle. */
+export function adoptionPrompt(status: Pick<CliStatus, "busy">): string | undefined {
+  return status.busy ? ADOPTION_PROMPT : undefined;
+}
 const RESTART_PROMPT_MARKERS = [
   "Continue where you left off.",
   "Note: the T3 server restarted, and this background work was cancelled",
@@ -739,6 +745,33 @@ export class AdoptableSessions {
       if (status.busy || status.background || status.unread) live.push({ dir, state, status });
     }
     return live;
+  }
+
+  /**
+   * True when a previous server left a live CLI for this thread and its last
+   * event was a result: no turn is in progress, so a restart prompt must not
+   * reach it. Its session is adopted, and its unread output delivered, the
+   * next time the thread opens it.
+   */
+  hasIdleLive(threadId: string): boolean {
+    const threadDir = this.#threadDir(threadId);
+    let entries: string[];
+    try {
+      entries = NodeFS.readdirSync(threadDir);
+    } catch {
+      return false;
+    }
+    for (const name of entries) {
+      const dir = NodePath.join(threadDir, name);
+      if ([...owned].some((session) => session.dir === dir)) continue;
+      if (NodeFS.existsSync(NodePath.join(dir, "closed"))) continue;
+      if (readExitStatus(dir) !== null) continue;
+      const state = readJson<AdoptableState>(NodePath.join(dir, "state.json"));
+      if (state === undefined || state.sessionId === null) continue;
+      if (!processAlive(state.pid, state.startTime)) continue;
+      if (adoptionPrompt(cliStatus(dir, state.offset)) === undefined) return true;
+    }
+    return false;
   }
 
   #launchDirs(): string[] {

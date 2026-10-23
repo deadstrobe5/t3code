@@ -3,12 +3,12 @@
  * left running (see adoptableSessions.ts).
  *
  * A thread whose turn was cut gets upstream's restart continuation, which
- * opens its session and so adopts the CLI. A thread whose turn had already
- * ended, but whose CLI still has background work or unread output, gets
- * nothing from upstream: this sends it a short system message instead. Its
- * session opens, adopts the CLI, and the CLI's own turns (a finished
- * background task, the end of the cut turn) reach the thread as they do on a
- * live server.
+ * opens its session and so adopts the CLI. A thread T3 thinks is done, but
+ * whose CLI is still in a turn, gets nothing from upstream: this sends it a
+ * short system message instead. Its session opens, adopts the CLI, and the
+ * rest of the turn reaches the thread as it does on a live server. An idle CLI
+ * (its last event was a result) gets no message: it is adopted silently the
+ * next time the thread opens its session.
  */
 import { CommandId, MessageId, ThreadId } from "@t3tools/contracts";
 import { runRanAfter } from "@t3tools/shared/orchestrationV2ThreadError";
@@ -19,7 +19,7 @@ import * as HostProcess from "@t3tools/shared/HostProcess";
 
 import * as ServerConfig from "../config.ts";
 import * as ThreadManagement from "../orchestration-v2/ThreadManagementService.ts";
-import { ADOPTION_PROMPT, AdoptableSessions } from "./adoptableSessions.ts";
+import { AdoptableSessions, adoptionPrompt } from "./adoptableSessions.ts";
 
 /** Lets upstream's restart continuations start first, so they are not doubled. */
 const SETTLE_DELAY = "5 seconds";
@@ -36,6 +36,11 @@ export const reattachAdoptableSessions = Effect.gen(function* () {
   const boot = (yield* Clock.currentTimeMillis).toString(36);
   for (const live of sessions.listLive()) {
     const threadId = ThreadId.make(live.state.threadId);
+    // An idle CLI gets nothing: a prompt would start a turn and a new answer.
+    // Its session is adopted, and its unread output read, when the thread
+    // next opens it.
+    const text = adoptionPrompt(live.status);
+    if (text === undefined) continue;
     yield* Effect.gen(function* () {
       const records = yield* threads.getThreadRecords(threadId, ["runs"]);
       if (records.thread.archivedAt !== null || records.thread.deletedAt !== null) return;
@@ -59,12 +64,12 @@ export const reattachAdoptableSessions = Effect.gen(function* () {
         commandId: CommandId.make(`command:adopt-session:${key}`),
         threadId,
         messageId: MessageId.make(`message:adopt-session:${key}`),
-        text: ADOPTION_PROMPT,
+        text,
         notification: {
           source: { kind: "system" },
           outcome: "updated",
           summary: "T3 Code restarted; the agent kept running",
-          detail: ADOPTION_PROMPT,
+          detail: text,
         },
         attachments: [],
         modelSelection: latest.modelSelection,

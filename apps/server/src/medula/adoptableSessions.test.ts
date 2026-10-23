@@ -18,7 +18,10 @@ import {
   layerQueryRunner,
 } from "../orchestration-v2/Adapters/ClaudeAdapterV2.ts";
 import {
+  ADOPTION_PROMPT,
   AdoptableSessions,
+  adoptionPrompt,
+  cliStatus,
   processAlive,
   releaseAll,
   resetReleaseForTests,
@@ -260,6 +263,51 @@ describe.skipIf(HostProcess.Platform.defaultValue() === "win32")(
         } finally {
           process.kill = kill;
         }
+      } finally {
+        NodeFS.rmSync(stateDir, { recursive: true, force: true });
+      }
+    });
+
+    it("an idle adopted CLI gets no prompt; one mid-turn gets a note that does not repeat", () => {
+      const stateDir = NodeFS.mkdtempSync(NodePath.join(NodeOS.tmpdir(), "t3-adopt-prompt-"));
+      try {
+        const sessions = new AdoptableSessions(stateDir);
+        const launch = sessions.prepare("thread-prompt", "s3");
+        NodeFS.writeFileSync(
+          NodePath.join(launch.dir, "state.json"),
+          JSON.stringify({
+            version: 1,
+            threadId: "thread-prompt",
+            sessionId: "s3",
+            pid: process.pid,
+            startTime: null,
+            createdAt: "",
+            offset: 0,
+          }),
+        );
+        const out = NodePath.join(launch.dir, "out");
+        const line = (message: object) => `${JSON.stringify(message)}\n`;
+        NodeFS.writeFileSync(
+          out,
+          line({ type: "system", subtype: "init" }) +
+            line({ type: "assistant", message: { content: [] } }) +
+            line({ type: "result", subtype: "success", result: "done" }) +
+            line({ type: "system", subtype: "background_tasks_changed", tasks: [{ id: "t" }] }),
+        );
+        const idle = cliStatus(launch.dir, 0);
+        assert.isFalse(idle.busy);
+        assert.isUndefined(adoptionPrompt(idle), "an idle CLI gets no prompt");
+        assert.isTrue(sessions.hasIdleLive("thread-prompt"));
+        assert.isFalse(sessions.hasIdleLive("other-thread"));
+
+        NodeFS.appendFileSync(out, line({ type: "assistant", message: { content: [] } }));
+        const busy = cliStatus(launch.dir, 0);
+        assert.isTrue(busy.busy);
+        const note = adoptionPrompt(busy);
+        assert.equal(note, ADOPTION_PROMPT);
+        assert.include(note!, "continue the current turn");
+        assert.notInclude(note!.toLowerCase(), "repeat");
+        assert.isFalse(sessions.hasIdleLive("thread-prompt"), "a CLI mid-turn is not idle");
       } finally {
         NodeFS.rmSync(stateDir, { recursive: true, force: true });
       }

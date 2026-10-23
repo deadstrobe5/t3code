@@ -1,3 +1,4 @@
+import * as HostProcess from "@t3tools/shared/HostProcess";
 import { runRanAfter } from "@t3tools/shared/orchestrationV2ThreadError";
 import { resolveProjectSettings } from "@t3tools/shared/projectSettings";
 import {
@@ -10,8 +11,11 @@ import {
 } from "@t3tools/contracts";
 import * as DateTime from "effect/DateTime";
 import * as Effect from "effect/Effect";
+import * as Option from "effect/Option";
 import type { ProjectionRuntimeRecoveryState } from "./ProjectionStore.ts";
 
+import * as ServerConfig from "../config.ts";
+import { AdoptableSessions } from "../medula/adoptableSessions.ts";
 import * as ServerSettings from "../serverSettings.ts";
 import { isNativeMaintenanceCommand } from "./CommandPolicy.ts";
 import * as ThreadManagementService from "./ThreadManagementService.ts";
@@ -227,6 +231,20 @@ export const continueRestartedRun = Effect.fn("RestartContinuation.continueResta
     )
       return;
     if (projection.thread.providerInstanceId !== source.providerInstanceId) return;
+    // Medula: the CLI outlived the restart and has already finished its turn.
+    // A prompt would make it start another one and answer again.
+    const serverConfig = yield* Effect.serviceOption(ServerConfig.ServerConfig);
+    if (
+      Option.isSome(serverConfig) &&
+      AdoptableSessions.enabled(process.env, yield* HostProcess.Platform) &&
+      new AdoptableSessions(serverConfig.value.stateDir).hasIdleLive(input.threadId)
+    ) {
+      yield* Effect.logInfo("medula.adoptable-session.idle-no-continuation", {
+        threadId: input.threadId,
+        sourceRunId: input.sourceRunId,
+      });
+      return;
+    }
     // A turn that keeps crashing the server would otherwise restart it forever.
     let chainLength = 0;
     const loopWindowStart =
