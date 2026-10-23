@@ -94,10 +94,13 @@ if [ -d "$APP" ] && [[ "$cur" != *-medula.* ]] && [ ! -d "$B/oficial/T3 Code (Be
   ditto "$APP" "$B/oficial/T3 Code (Beta).app"
   echo "official $cur backed up to $B/oficial"
 fi
-if pgrep -xq "T3 Code (Beta)"; then
+# macOS names the process by its full path, so pgrep -x never matches it.
+running() { pgrep -f "$APP/Contents/MacOS/" >/dev/null; }
+if running; then
   osascript -e 'quit app "T3 Code (Beta)"' || true
-  for _ in $(seq 1 20); do pgrep -xq "T3 Code (Beta)" || break; sleep 1; done
-  pkill -x "T3 Code (Beta)" || true
+  for _ in $(seq 1 30); do running || break; sleep 1; done
+  pkill -f "$APP/Contents/MacOS/" || true
+  for _ in $(seq 1 10); do running || break; sleep 1; done
 fi
 rm -rf "$APP.new"
 ditto "$new" "$APP.new"
@@ -106,6 +109,16 @@ mv "$APP.new" "$APP"
 installed=$(defaults read "$APP/Contents/Info.plist" CFBundleShortVersionString)
 echo "installed $installed"
 [[ "$installed" == *-medula.* ]]
-[ "$OPEN" = 1 ] && open -a "$APP"
+if [ "$OPEN" = 1 ]; then
+  open -a "$APP"
+  # The server writes its version when it starts; the old one must not answer.
+  for _ in $(seq 1 60); do
+    grep -q "\"serverVersion\":\"$installed\"" "$HOME/.t3/userdata/server-runtime.json" 2>/dev/null && break
+    sleep 1
+  done
+  grep -q "\"serverVersion\":\"$installed\"" "$HOME/.t3/userdata/server-runtime.json" ||
+    { echo "the running server is not $installed" >&2; exit 1; }
+  echo "running $installed"
+fi
 echo "ok"
 MAC
