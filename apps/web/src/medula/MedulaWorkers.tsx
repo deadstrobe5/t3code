@@ -1,5 +1,5 @@
 import { ChevronRight, Cpu } from "lucide-react";
-import { useEffect, useState } from "react";
+import { useEffect, useState, useSyncExternalStore } from "react";
 
 import { ScrollArea } from "~/components/ui/scroll-area";
 import { cn } from "~/lib/utils";
@@ -17,6 +17,9 @@ import {
   type MedulaWorkerLog,
   type MedulaWorkerTone,
 } from "./medulaWorkerModel";
+import { MedulaResumeStrip } from "./MedulaResumeStrip";
+
+export const OperariosIcon = Cpu;
 
 const FINISHED_SHOWN = 5;
 
@@ -66,8 +69,8 @@ function usePolled<T>(enabled: boolean, key: string, fn: (key: string) => Promis
   return { data: value?.key === key ? value.data : null, now };
 }
 
-function WorkerLog({ id }: { id: string }) {
-  const { data } = usePolled(true, id, fetchMedulaWorkerLog);
+function WorkerLog({ id, visible }: { id: string; visible: boolean }) {
+  const { data } = usePolled(visible, id, fetchMedulaWorkerLog);
   if (data === null) {
     return <p className="px-2 py-1 text-xs text-muted-foreground">A ler…</p>;
   }
@@ -78,7 +81,7 @@ function WorkerLog({ id }: { id: string }) {
       </p>
       <ScrollArea className="max-h-64">
         <pre className="px-2 py-1.5 font-mono text-xs whitespace-pre-wrap wrap-anywhere text-foreground">
-          {data.text || "—"}
+          {data.text || "(vazio)"}
         </pre>
       </ScrollArea>
     </div>
@@ -89,11 +92,13 @@ function WorkerRow({
   worker,
   now,
   open,
+  visible,
   onToggle,
 }: {
   worker: MedulaWorker;
   now: number;
   open: boolean;
+  visible: boolean;
   onToggle: () => void;
 }) {
   const elapsed = medulaWorkerElapsedMs(worker, now);
@@ -133,7 +138,7 @@ function WorkerRow({
             .join(" · ")}
         </span>
       </button>
-      {open ? <WorkerLog id={worker.id} /> : null}
+      {open ? <WorkerLog id={worker.id} visible={visible} /> : null}
     </li>
   );
 }
@@ -146,27 +151,62 @@ function pickShown(list: MedulaWorkerList | null): MedulaWorker[] {
 }
 
 /**
- * Background agents launched outside the conversation (one state file each on the server),
- * listed next to the feed so they are as visible as the conversation's own subagents.
+ * Whether the server has a workers directory (T3CODE_MEDULA_WORKERS_DIR), asked once per app load
+ * so the "Operários" tab is only offered where it has something to show. Null until known.
+ */
+let workersConfigured: boolean | null = null;
+let workersConfiguredRequest: Promise<void> | null = null;
+const configuredListeners = new Set<() => void>();
+
+function subscribeWorkersConfigured(listener: () => void) {
+  configuredListeners.add(listener);
+  if (workersConfigured === null && workersConfiguredRequest === null) {
+    workersConfiguredRequest = fetchMedulaWorkers().then(
+      (list) => {
+        workersConfigured = list.configured;
+        for (const notify of configuredListeners) notify();
+      },
+      () => {
+        // Retry on the next subscriber.
+        workersConfiguredRequest = null;
+      },
+    );
+  }
+  return () => {
+    configuredListeners.delete(listener);
+  };
+}
+
+export function useMedulaWorkersConfigured(): boolean {
+  return useSyncExternalStore(subscribeWorkersConfigured, () => workersConfigured === true);
+}
+
+/**
+ * The "Operários" right-panel surface: background agents launched outside the conversation (one
+ * state file each on the server), as visible as the conversation's own subagents. Polls only
+ * while on screen.
  */
 export function MedulaWorkers({ visible }: { visible: boolean }) {
   const { data, now } = usePolled(visible, "workers", fetchMedulaWorkersForKey);
   const [openId, setOpenId] = useState<string | null>(null);
-  if (data === null || !data.configured) return null;
   const shown = pickShown(data);
-  const running = data.workers.filter(isMedulaWorkerRunning).length;
+  const running = data?.workers.filter(isMedulaWorkerRunning).length ?? 0;
   return (
-    <div
-      className="flex max-h-[40%] min-h-0 shrink-0 flex-col border-b border-border/60"
-      data-medula-workers
-    >
+    <div className="flex h-full min-h-0 flex-col" data-medula-workers>
+      <MedulaResumeStrip visible={visible} />
       <p className="flex shrink-0 items-center gap-1.5 px-2 pt-1.5 pb-0.5 text-xs font-medium text-muted-foreground">
-        <Cpu aria-hidden className="size-3.5" />
+        <OperariosIcon aria-hidden className="size-3.5" />
         Operários
-        <span className="tabular-nums">· {running} a correr</span>
+        {data?.configured ? <span className="tabular-nums">· {running} a correr</span> : null}
       </p>
       <ScrollArea className="min-h-0 flex-1">
-        {shown.length === 0 ? (
+        {data === null ? (
+          <p className="px-3 py-2 text-xs text-muted-foreground">A ler…</p>
+        ) : !data.configured ? (
+          <p className="px-3 py-2 text-xs text-muted-foreground">
+            O servidor não tem pasta de operários.
+          </p>
+        ) : shown.length === 0 ? (
           <p className="px-3 py-2 text-xs text-muted-foreground">Nenhum operário.</p>
         ) : (
           <ul className="flex flex-col p-1">
@@ -176,6 +216,7 @@ export function MedulaWorkers({ visible }: { visible: boolean }) {
                 worker={worker}
                 now={now}
                 open={openId === worker.id}
+                visible={visible}
                 onToggle={() => setOpenId((current) => (current === worker.id ? null : worker.id))}
               />
             ))}

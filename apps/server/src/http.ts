@@ -3,7 +3,6 @@ import {
   AuthOrchestrationOperateScope,
   AuthOrchestrationReadScope,
   EnvironmentHttpApi,
-  ThreadId,
 } from "@t3tools/contracts";
 import { isDevProxiedPath } from "@t3tools/shared/devProxy";
 import { injectMcpAppCookieBootstrap, injectMcpAppThemeBootstrap } from "@t3tools/shared/mcpApp";
@@ -32,8 +31,6 @@ import { OtlpTracer, OtlpSerialization } from "effect/observability";
 
 import * as ServerConfig from "./config.ts";
 import * as MedulaWorkers from "./medula/workers.ts";
-import * as MedulaContext from "./medula/context.ts";
-import * as ProjectionStore from "./orchestration-v2/ProjectionStore.ts";
 import * as MedulaAutoResume from "./medula/autoResume.ts";
 import { ASSET_ROUTE_PREFIX, readMcpAppHtml, resolveAsset } from "./assets/AssetAccess.ts";
 import { sourceControlMediaResponse } from "./assets/sourceControlMediaResponse.ts";
@@ -458,58 +455,6 @@ export const layerMedulaWorkerLogRoute = HttpRouter.add(
     }),
     Effect.withTracerEnabled(false),
   ),
-);
-
-const decodeMedulaThreadId = Schema.decodeUnknownOption(ThreadId);
-
-const medulaContextHandler = Effect.gen(function* () {
-  yield* authenticateRawRouteWithScope(AuthOrchestrationReadScope);
-  const request = yield* HttpServerRequest.HttpServerRequest;
-  const url = HttpServerRequest.toURL(request);
-  const params = Option.isSome(url) ? url.value.searchParams : new URLSearchParams();
-  const respond = (body: MedulaContext.MedulaContextResponse) =>
-    HttpServerResponse.jsonUnsafe(body, noStore);
-  const threadId = decodeMedulaThreadId(params.get("threadId"));
-  if (Option.isNone(threadId)) return respond({ available: false, reason: "thread-not-found" });
-  const projections = yield* ProjectionStore.ProjectionStoreV2;
-  const records = yield* projections
-    .getThreadRecords(threadId.value, ["providerThreads", "providerSessions"])
-    .pipe(Effect.catchTags({ ProjectionStoreThreadNotFoundError: () => Effect.succeed(null) }));
-  if (records === null) return respond({ available: false, reason: "thread-not-found" });
-  const session = MedulaContext.pickClaudeSession({
-    activeProviderThreadId: records.thread.activeProviderThreadId,
-    worktreePath: records.thread.worktreePath,
-    providerThreads: records.providerThreads,
-    providerSessions: records.providerSessions,
-  });
-  if (session === null) return respond({ available: false, reason: "no-claude-session" });
-  const context = yield* Effect.promise(() =>
-    MedulaContext.readThreadContext({ ...session, summary: params.get("summary") === "1" }),
-  );
-  return respond(context);
-}).pipe(
-  Effect.catchTags({
-    EnvironmentAuthInvalidError: HttpServerRespondable.toResponse,
-    EnvironmentInternalError: HttpServerRespondable.toResponse,
-    EnvironmentScopeRequiredError: HttpServerRespondable.toResponse,
-  }),
-  Effect.orElseSucceed(() => HttpServerResponse.text("Internal Error", { status: 500 })),
-  Effect.withTracerEnabled(false),
-);
-
-// Route requirements are resolved per request from the served context, which
-// has no projection store, so the store is captured when the layer is built.
-export const layerMedulaContextRoute = HttpRouter.use((router) =>
-  Effect.gen(function* () {
-    const projections = yield* ProjectionStore.ProjectionStoreV2;
-    yield* router.add(
-      "GET",
-      MedulaContext.MEDULA_CONTEXT_PATH,
-      medulaContextHandler.pipe(
-        Effect.provideService(ProjectionStore.ProjectionStoreV2, projections),
-      ),
-    );
-  }),
 );
 
 export const layerMedulaResumeRoute = HttpRouter.add(

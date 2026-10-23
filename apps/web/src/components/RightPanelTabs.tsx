@@ -92,8 +92,7 @@ import { PierreEntryIcon } from "./chat/PierreEntryIcon";
 import { resolvePullRequestState } from "./pullRequest/pullRequestPresentation";
 import { PullRequestGlyph } from "~/components/pullRequest/pullRequestIcons";
 import { observeResize } from "~/lib/observeResize";
-import { MedulaIcon } from "~/medula/MedulaPanel";
-import { MEDULA_DEFAULT_TITLE, useMedulaStore } from "~/medula/medulaStore";
+import { OperariosIcon, useMedulaWorkersConfigured } from "~/medula/MedulaWorkers";
 
 export interface RightPanelTabsProps {
   mode: PreviewPanelMode;
@@ -139,8 +138,8 @@ export interface RightPanelTabsProps {
   onAddPullRequest: () => void;
   onAddPullRequests: () => void;
   onAddDevice: () => void;
-  /** Absent where the Medula panel has no place, such as the pull-request list. */
-  onAddMedula?: () => void;
+  /** Absent where the Operários surface has no place, such as the pull-request list. */
+  onAddOperarios?: () => void;
   browserAvailable: boolean;
   terminalAvailable: boolean;
   diffAvailable: boolean;
@@ -174,7 +173,7 @@ const SURFACE_DISABLED_REASONS = {
   pullRequest: "This thread's branch has no pull request yet.",
   pullRequests: "No linked pull requests are available for this thread.",
   device: "Devices are only available from a thread.",
-  medula: "Turn the Medula panel on in Settings.",
+  operarios: "The server has no Medula workers directory.",
 } as const;
 
 // Closed keepMounted popups must stop blocking shortcuts once their exit transition ends.
@@ -199,7 +198,7 @@ const SURFACE_UNAVAILABLE_HINTS = {
   pullRequest: "No pull request on this branch yet.",
   pullRequests: "No linked pull requests available.",
   device: "Available from a thread.",
-  medula: "Turn it on in Settings.",
+  operarios: "No workers directory on the server.",
 } as const;
 
 type TabContextMenuAction =
@@ -321,8 +320,8 @@ function RightPanelEmptyState(props: {
   onAddPullRequest: () => void;
   onAddPullRequests: () => void;
   onAddDevice: () => void;
-  /** Absent where the Medula panel has no place, such as the pull-request list. */
-  onAddMedula?: () => void;
+  /** Absent where the Operários surface has no place, such as the pull-request list. */
+  onAddOperarios?: () => void;
   browserAvailable: boolean;
   terminalAvailable: boolean;
   diffAvailable: boolean;
@@ -332,8 +331,7 @@ function RightPanelEmptyState(props: {
   deviceAvailable: boolean;
 }) {
   const [highlight, setHighlight] = useState(-1);
-  const medulaEnabled = useMedulaStore((state) => state.enabled);
-  const medulaTitle = useMedulaStore((state) => state.title.trim() || MEDULA_DEFAULT_TITLE);
+  const operariosConfigured = useMedulaWorkersConfigured();
 
   const actions = [
     {
@@ -394,12 +392,12 @@ function RightPanelEmptyState(props: {
       onClick: props.onAddDevice,
     },
     {
-      label: medulaTitle,
-      icon: MedulaIcon,
+      label: "Operários",
+      icon: OperariosIcon,
       shortcut: "H",
-      available: medulaEnabled && props.onAddMedula !== undefined,
-      disabledReason: SURFACE_UNAVAILABLE_HINTS.medula,
-      onClick: () => props.onAddMedula?.(),
+      available: operariosConfigured && props.onAddOperarios !== undefined,
+      disabledReason: SURFACE_UNAVAILABLE_HINTS.operarios,
+      onClick: () => props.onAddOperarios?.(),
     },
   ] as const;
 
@@ -583,8 +581,8 @@ function surfaceTitle(
       return `#${surface.number}`;
     case "pull-requests":
       return "Pull requests";
-    case "medula":
-      return useMedulaStore.getState().title.trim() || MEDULA_DEFAULT_TITLE;
+    case "operarios":
+      return "Operários";
     case "device":
       return surface.title ?? surface.target?.name ?? "Device";
     case "preview": {
@@ -675,8 +673,8 @@ function SurfaceIcon({
       );
     case "pull-requests":
       return <PullRequestGlyph.link className="size-3 shrink-0" />;
-    case "medula":
-      return <MedulaIcon className="size-3 shrink-0" />;
+    case "operarios":
+      return <OperariosIcon className="size-3 shrink-0" />;
     case "device":
       return surface.target?.platform === "ios" ? (
         <AppleIcon className="size-3 shrink-0" />
@@ -1049,8 +1047,7 @@ export function RightPanelTabs(props: RightPanelTabsProps) {
     });
   };
 
-  const medulaEnabled = useMedulaStore((state) => state.enabled);
-  const medulaTitle = useMedulaStore((state) => state.title.trim() || MEDULA_DEFAULT_TITLE);
+  const operariosConfigured = useMedulaWorkersConfigured();
   const addSurfaceActions = [
     {
       label: "Browser",
@@ -1109,12 +1106,12 @@ export function RightPanelTabs(props: RightPanelTabsProps) {
       onClick: props.onAddDevice,
     },
     {
-      label: medulaTitle,
-      icon: MedulaIcon,
+      label: "Operários",
+      icon: OperariosIcon,
       shortcut: "H",
-      available: medulaEnabled && props.onAddMedula !== undefined,
-      disabledReason: SURFACE_DISABLED_REASONS.medula,
-      onClick: () => props.onAddMedula?.(),
+      available: operariosConfigured && props.onAddOperarios !== undefined,
+      disabledReason: SURFACE_DISABLED_REASONS.operarios,
+      onClick: () => props.onAddOperarios?.(),
     },
   ] as const;
 
@@ -1489,7 +1486,7 @@ export function RightPanelTabs(props: RightPanelTabsProps) {
             onAddPullRequest={props.onAddPullRequest}
             onAddPullRequests={props.onAddPullRequests}
             onAddDevice={props.onAddDevice}
-            {...(props.onAddMedula ? { onAddMedula: props.onAddMedula } : {})}
+            {...(props.onAddOperarios ? { onAddOperarios: props.onAddOperarios } : {})}
             browserAvailable={props.browserAvailable}
             terminalAvailable={props.terminalAvailable}
             diffAvailable={props.diffAvailable}

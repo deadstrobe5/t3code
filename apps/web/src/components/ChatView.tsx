@@ -275,7 +275,6 @@ import {
   ThreadPanelHeaderControl,
   WorkspaceTitlebarControls,
 } from "./chat/PanelLayoutControls";
-import { useMedulaContextThread } from "~/medula/medulaContextStore";
 import { medulaResumeTitle, useMedulaResume } from "~/medula/medulaResume";
 import type { ExpandedImagePreview } from "./chat/ExpandedImagePreview";
 import { ThreadDetailsPanel } from "./chat/ThreadDetailsPanel";
@@ -1112,11 +1111,6 @@ export default function ChatView(props: ChatViewProps) {
   }, [activeEnvironmentBootstrapComplete, activeProject, activeThreadRef]);
 
   const primaryEnvironmentId = primaryEnvironment?.environmentId ?? null;
-  useMedulaContextThread(
-    isServerThread && activeThread?.environmentId === primaryEnvironmentId
-      ? (activeThreadId ?? null)
-      : null,
-  );
   useEffect(() => {
     if (!activeThreadRef || !activeProjectRef) return;
     registerFaviconProjectForThread(activeThreadRef, activeProjectRef);
@@ -2399,7 +2393,7 @@ export default function ChatView(props: ChatViewProps) {
     addDeviceSurfaceStable,
     addDiffSurfaceStable,
     addFilesSurfaceStable,
-    addMedulaSurfaceStable,
+    addOperariosSurfaceStable,
     addPullRequestSurfaceStable,
     addPullRequestsSurfaceStable,
     closePreviewPanelStable,
@@ -2413,7 +2407,6 @@ export default function ChatView(props: ChatViewProps) {
     toggleRightPanelMaximizedStable,
     toggleRightPanelStable,
     toggleThreadPanelStable,
-    toggleMedulaSurfaceStable,
     shortcuts: rightPanelShortcuts,
   } = useRightPanelActions({
     activeThreadRef,
@@ -3140,8 +3133,7 @@ export default function ChatView(props: ChatViewProps) {
     onToggleTerminal: toggleTerminalVisibilityStable,
     onToggleThreadPanel: toggleThreadPanelStable,
     onToggleRightPanel: toggleRightPanelStable,
-    medulaOpen: rightPanelOpen && renderedRightPanelSurface?.kind === "medula",
-    onToggleMedula: toggleMedulaSurfaceStable,
+    showMedulaLink: true,
   } satisfies PanelLayoutControlsProps;
   const panelToggleControls = (
     <PanelLayoutControls
@@ -3907,7 +3899,7 @@ export default function ChatView(props: ChatViewProps) {
           onAddPullRequest={addPullRequestSurfaceStable}
           onAddPullRequests={addPullRequestsSurfaceStable}
           onAddDevice={addDeviceSurfaceStable}
-          onAddMedula={addMedulaSurfaceStable}
+          onAddOperarios={addOperariosSurfaceStable}
           browserAvailable={canOperatePreview && browserAvailable}
           terminalAvailable={activeProject !== null && canOperateTerminal}
           diffAvailable={isServerThread && isGitRepo}
