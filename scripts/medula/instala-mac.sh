@@ -50,8 +50,14 @@ cat >"$B/env.sh" <<ENV
 export PATH=\$HOME/.local/node/bin:\$HOME/.local/pnpm/bin:\$PATH
 export PNPM_HOME=\$HOME/.local/pnpm-home
 export pnpm_config_store_dir=\$HOME/code/t3code-build/pnpm-store
+# The native crates need edition 2024; the Mac's default cargo is older.
+export RUSTUP_TOOLCHAIN=1.98.0
+export PATH=\$HOME/.cargo/bin:\$PATH
 ENV
 . "$B/env.sh"
+if command -v rustup >/dev/null && ! rustup toolchain list | grep -q "^$RUSTUP_TOOLCHAIN"; then
+  rustup toolchain install "$RUSTUP_TOOLCHAIN" --profile minimal
+fi
 want=$(sed -n 's/.*"packageManager": *"pnpm@\([^"]*\)".*/\1/p' "$R/package.json" 2>/dev/null || true)
 if [ -z "$want" ] || [ "$(pnpm -v 2>/dev/null)" != "$want" ]; then
   npm install -g --prefix "$HOME/.local/pnpm" "pnpm@${want:-latest}" >/dev/null
