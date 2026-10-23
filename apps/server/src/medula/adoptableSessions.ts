@@ -32,16 +32,20 @@ export const ADOPTABLE_SESSIONS_ENV = "T3_ADOPTABLE_SESSIONS";
 export const SESSIONS_DIR_NAME = "sessoes";
 
 /**
- * Runs the CLI with the FIFO as stdin and the output file as stdout, then
- * records its exit status and kills what it left in its process group (MCP
- * server children, as upstream does on exit). TERM and INT reach the CLI;
- * the shim itself only waits.
+ * Runs the CLI with the output file as stdout and `cat` relaying the FIFO to
+ * its stdin, then records its exit status and kills what it left in its
+ * process group (`cat`, and MCP server children as upstream does on exit).
+ * TERM and INT reach the CLI; the shim itself only waits.
+ *
+ * The CLI reads an ordinary pipe, as it does upstream: on macOS, a CLI reading
+ * the FIFO itself stops reading when a line larger than the FIFO's buffer (a
+ * pasted image) arrives while it is idle, and the turn never starts.
  */
 export const ADOPTABLE_SHIM = [
   "d=$1; shift",
   "trap '' HUP",
   `trap 'kill -TERM "$c" 2>/dev/null' TERM INT`,
-  '"$@" <>"$d/in" >>"$d/out" 2>/dev/null &',
+  'cat <>"$d/in" | "$@" >>"$d/out" 2>/dev/null &',
   "c=$!",
   'while :; do wait "$c"; s=$?; kill -0 "$c" 2>/dev/null || break; done',
   `printf '%s\\n' "$s" >"$d/exit.tmp" && mv -f "$d/exit.tmp" "$d/exit"`,
@@ -52,6 +56,40 @@ const READ_CHUNK = 256 * 1024;
 const POLL_INTERVAL_MS = 200;
 const EXIT_POLL_INTERVAL_MS = 500;
 const STATE_WRITE_DELAY_MS = 300;
+/** How long a full FIFO waits before the next write attempt. */
+const WRITE_RETRY_MS = 20;
+const KILL_GRACE_MS = 5_000;
+/**
+ * A message that makes no progress into the FIFO for this long is not going
+ * to reach the CLI: the session is stopped and the turn fails.
+ */
+export const DELIVERY_STALL_MS = 60_000;
+let deliveryStallMs = DELIVERY_STALL_MS;
+
+/** Tests only: a shorter {@link DELIVERY_STALL_MS}. */
+export function setDeliveryStallForTests(ms: number = DELIVERY_STALL_MS): void {
+  deliveryStallMs = ms;
+}
+
+/** What the chat shows when a message never reached the CLI. */
+export const INPUT_STALLED_MESSAGE =
+  "Claude stopped reading its input, so your message never reached it. T3 Code stopped the session; send the message again.";
+
+/**
+ * {@link INPUT_STALLED_MESSAGE} when `cause` is that failure. The SDK rewraps
+ * the process error, so only its text survives.
+ */
+export function inputStalledMessage(cause: unknown): string | undefined {
+  for (let depth = 0; depth < 8 && cause !== null && typeof cause === "object"; depth++) {
+    const message = (cause as { message?: unknown }).message;
+    if (typeof message === "string" && message.includes(INPUT_STALLED_MESSAGE)) {
+      return INPUT_STALLED_MESSAGE;
+    }
+    cause = (cause as { cause?: unknown }).cause;
+  }
+  return undefined;
+}
+
 /** How much of the end of `out` {@link cliStatus} reads. */
 const STATUS_TAIL_BYTES = 8 * 1024 * 1024;
 
@@ -364,20 +402,52 @@ export class AdoptableProcess extends NodeEvents.EventEmitter {
     if (forward.length === 0) return callback();
     try {
       // Read-write, so opening never waits for the CLI to open its end.
-      this.#inFd ??= NodeFS.openSync(NodePath.join(this.dir, "in"), "r+");
+      // Non-blocking: a blocked write would hold a libuv thread until the CLI
+      // reads, and on macOS closing the FIFO then blocks the whole server.
+      this.#inFd ??= NodeFS.openSync(
+        NodePath.join(this.dir, "in"),
+        NodeFS.constants.O_RDWR | NodeFS.constants.O_NONBLOCK,
+      );
     } catch (error) {
       return callback(error as Error);
     }
     const data = Buffer.from(forward.join(""), "utf8");
+    let lastProgress = Date.now();
     const writeAll = (offset: number) => {
       if (this.#inFd === null) return callback();
       NodeFS.write(this.#inFd, data, offset, data.length - offset, null, (error, written) => {
-        if (error) return callback(error);
-        if (offset + written < data.length) return writeAll(offset + written);
-        callback();
+        if (error && error.code !== "EAGAIN") return callback(error);
+        const next = offset + (error ? 0 : written);
+        if (next >= data.length) return callback();
+        if (next > offset) {
+          lastProgress = Date.now();
+          return writeAll(next);
+        }
+        if (Date.now() - lastProgress >= deliveryStallMs) return this.#deliveryStalled(callback);
+        setTimeout(() => writeAll(next), WRITE_RETRY_MS);
       });
     };
     writeAll(0);
+  }
+
+  /**
+   * The CLI stopped reading its input. Waiting longer only leaves the turn
+   * "working" forever, so the CLI is stopped and the turn fails with this
+   * error instead.
+   */
+  #deliveryStalled(callback: (error?: Error | null) => void) {
+    const error = new Error(INPUT_STALLED_MESSAGE);
+    if (this.listenerCount("error") > 0) this.emit("error", error);
+    const pid = this.#state.pid;
+    this.kill("SIGTERM");
+    // A CLI that ignores TERM goes with its whole process group.
+    setTimeout(() => {
+      if (this.#finished || this.#released) return;
+      try {
+        process.kill(-pid, "SIGKILL");
+      } catch {}
+    }, KILL_GRACE_MS).unref();
+    callback(error);
   }
 
   /**
