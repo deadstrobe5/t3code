@@ -21,6 +21,8 @@ type RecoveryProps = {
   recovery: OrchestrationV2LimitRecovery | null;
   timestampFormat: TimestampFormat;
   onChange: (recovery: OrchestrationV2LimitRecoveryUpdate) => Promise<void>;
+  /** Medula: «Quota gasta · retoma às HH:MM» when the server's auto-resume is on. */
+  medulaResumeTitle?: string | null;
 };
 
 export function usageLimitRecoveryBannerItem(props: RecoveryProps): ComposerBannerStackItem {
@@ -31,10 +33,12 @@ export function usageLimitRecoveryBannerItem(props: RecoveryProps): ComposerBann
     variant: "warning",
     priority: "urgent",
     icon: <GaugeIcon />,
-    title: "Usage limit reached",
-    description: resetAt
-      ? `Resets ${formatUpcomingTimestamp(resetAt, timestampFormat)}`
-      : "Reset time unavailable; retry manually",
+    title: props.medulaResumeTitle ?? "Usage limit reached",
+    description: props.medulaResumeTitle
+      ? "Retoma automática: a conversa continua sozinha quando a quota voltar."
+      : resetAt
+        ? `Resets ${formatUpcomingTimestamp(resetAt, timestampFormat)}`
+        : "Reset time unavailable; retry manually",
     actions: canSchedule ? <RecoveryActions key={`${runId}:${resetAt}`} {...props} /> : null,
   };
 }
