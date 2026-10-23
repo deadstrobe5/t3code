@@ -708,6 +708,10 @@ const layerMakeRoutes = Layer.mergeAll(
     ServerHttp.layerAssetRoute,
     ServerHttp.layerMedulaWorkersRoute,
     ServerHttp.layerMedulaWorkerLogRoute,
+    // Reads the thread's Claude session id; the store layer is memoised, so
+    // this is the same instance the runtime uses.
+    ServerHttp.layerMedulaContextRoute.pipe(Layer.provide(ProjectionStoreV2.layer)),
+    ServerHttp.layerMedulaResumeRoute,
     ServerHttp.layerAttachmentUploadRoute,
     DeviceHubProxy.layer,
     ServerBrowserStream.routeLayer,

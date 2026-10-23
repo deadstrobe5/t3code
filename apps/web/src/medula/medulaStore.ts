@@ -20,8 +20,12 @@ import {
   parseMedulaMessage,
   resolveMedulaBaseUrl,
 } from "./medulaFeed";
+import { MEDULA_CONTEXT_DEFAULT_ORIGINS, type MedulaContextOrigin } from "./medulaContext";
 
 export type MedulaConnection = "idle" | "connecting" | "open" | "closed";
+
+/** What the panel's lower section shows: the hub's feed or the chat's incoming context. */
+export type MedulaView = "feed" | "contexto";
 
 interface MedulaSettings {
   enabled: boolean;
@@ -30,6 +34,8 @@ interface MedulaSettings {
   title: string;
   filters: MedulaBlock[];
   showHub: boolean;
+  view: MedulaView;
+  contextOrigins: MedulaContextOrigin[];
   /** Epoch ms of the newest item the user has seen; null until the first load. */
   lastSeenAt: number | null;
 }
@@ -49,6 +55,8 @@ const DEFAULT_SETTINGS: MedulaSettings = {
   title: MEDULA_DEFAULT_TITLE,
   filters: [...MEDULA_BLOCKS],
   showHub: true,
+  view: "feed",
+  contextOrigins: [...MEDULA_CONTEXT_DEFAULT_ORIGINS],
   lastSeenAt: null,
 };
 
@@ -77,6 +85,8 @@ export const useMedulaStore = create<MedulaState>()(
         title: state.title,
         filters: state.filters,
         showHub: state.showHub,
+        view: state.view,
+        contextOrigins: state.contextOrigins,
         lastSeenAt: state.lastSeenAt,
       }),
       onRehydrateStorage: () => (state) => {

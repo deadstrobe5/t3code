@@ -24,6 +24,8 @@ import {
   useMedulaBaseUrl,
   useMedulaStore,
 } from "./medulaStore";
+import { MedulaContext } from "./MedulaContext";
+import { MedulaResumeStrip } from "./MedulaResumeStrip";
 import { MedulaWorkers } from "./MedulaWorkers";
 
 export const MEDULA_BLOCK_LABELS: Record<MedulaBlock, string> = {
@@ -210,6 +212,7 @@ export function MedulaPanel({ visible }: { visible: boolean }) {
   const connection = useMedulaStore((state) => state.connection);
   const filters = useMedulaStore((state) => state.filters);
   const showHub = useMedulaStore((state) => state.showHub);
+  const view = useMedulaStore((state) => state.view);
   const update = useMedulaStore((state) => state.update);
   // Read once per opening so the "new" dots survive the mark that clears the badge.
   const [seenAtOpen, setSeenAtOpen] = useState(readMedulaLastSeenAt);
@@ -294,26 +297,40 @@ export function MedulaPanel({ visible }: { visible: boolean }) {
         </Section>
       ) : null}
 
+      <MedulaResumeStrip visible={visible} />
       <MedulaWorkers visible={visible} />
 
       <Section className="flex-[2]">
         <div className="flex shrink-0 flex-wrap items-center gap-1.5 px-2 py-1.5">
           <ToggleGroup
-            multiple
-            aria-label="Filtros do feed"
-            value={filters}
-            onValueChange={(value) =>
-              update({
-                filters: MEDULA_BLOCKS.filter((block) => (value as string[]).includes(block)),
-              })
-            }
+            aria-label="Vista"
+            value={[view]}
+            onValueChange={(value) => {
+              const next = (value as string[])[0];
+              if (next === "feed" || next === "contexto") update({ view: next });
+            }}
           >
-            {MEDULA_BLOCKS.map((block) => (
-              <Toggle key={block} value={block}>
-                {MEDULA_BLOCK_LABELS[block]}
-              </Toggle>
-            ))}
+            <Toggle value="feed">Feed</Toggle>
+            <Toggle value="contexto">Contexto</Toggle>
           </ToggleGroup>
+          {view === "feed" ? (
+            <ToggleGroup
+              multiple
+              aria-label="Filtros do feed"
+              value={filters}
+              onValueChange={(value) =>
+                update({
+                  filters: MEDULA_BLOCKS.filter((block) => (value as string[]).includes(block)),
+                })
+              }
+            >
+              {MEDULA_BLOCKS.map((block) => (
+                <Toggle key={block} value={block}>
+                  {MEDULA_BLOCK_LABELS[block]}
+                </Toggle>
+              ))}
+            </ToggleGroup>
+          ) : null}
           <ToggleGroup
             aria-label="Painel"
             className="ml-auto"
@@ -323,19 +340,23 @@ export function MedulaPanel({ visible }: { visible: boolean }) {
             <Toggle value="hub">Painel</Toggle>
           </ToggleGroup>
         </div>
-        <ScrollArea className="min-h-0 flex-1">
-          {visibleItems.length === 0 ? (
-            <p className="px-3 py-6 text-center text-xs text-muted-foreground">
-              {connected ? "Nada por agora." : `Sem ligação a ${baseUrl}api/eventos`}
-            </p>
-          ) : (
-            <ul className="flex flex-col p-1">
-              {visibleItems.map((item) => (
-                <FeedRow key={item.key} item={item} unseen={item.at > seenAtOpen} />
-              ))}
-            </ul>
-          )}
-        </ScrollArea>
+        {view === "contexto" ? (
+          <MedulaContext visible={visible} />
+        ) : (
+          <ScrollArea className="min-h-0 flex-1">
+            {visibleItems.length === 0 ? (
+              <p className="px-3 py-6 text-center text-xs text-muted-foreground">
+                {connected ? "Nada por agora." : `Sem ligação a ${baseUrl}api/eventos`}
+              </p>
+            ) : (
+              <ul className="flex flex-col p-1">
+                {visibleItems.map((item) => (
+                  <FeedRow key={item.key} item={item} unseen={item.at > seenAtOpen} />
+                ))}
+              </ul>
+            )}
+          </ScrollArea>
+        )}
       </Section>
 
       <ThinkAloud baseUrl={baseUrl} />

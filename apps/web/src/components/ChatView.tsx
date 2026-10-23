@@ -275,6 +275,8 @@ import {
   ThreadPanelHeaderControl,
   WorkspaceTitlebarControls,
 } from "./chat/PanelLayoutControls";
+import { useMedulaContextThread } from "~/medula/medulaContextStore";
+import { medulaResumeTitle, useMedulaResume } from "~/medula/medulaResume";
 import type { ExpandedImagePreview } from "./chat/ExpandedImagePreview";
 import { ThreadDetailsPanel } from "./chat/ThreadDetailsPanel";
 import { NoActiveThreadState } from "./NoActiveThreadState";
@@ -1110,6 +1112,11 @@ export default function ChatView(props: ChatViewProps) {
   }, [activeEnvironmentBootstrapComplete, activeProject, activeThreadRef]);
 
   const primaryEnvironmentId = primaryEnvironment?.environmentId ?? null;
+  useMedulaContextThread(
+    isServerThread && activeThread?.environmentId === primaryEnvironmentId
+      ? (activeThreadId ?? null)
+      : null,
+  );
   useEffect(() => {
     if (!activeThreadRef || !activeProjectRef) return;
     registerFaviconProjectForThread(activeThreadRef, activeProjectRef);
@@ -2584,11 +2591,13 @@ export default function ChatView(props: ChatViewProps) {
     });
     return item ? [item] : [];
   });
+  const usageLimitStopped =
+    serverRuntime?.status === "failed" && serverRuntime.lastErrorClass === "usage_limit";
+  const medulaResume = useMedulaResume(usageLimitStopped);
   const limitRecoveryBanner =
-    serverRuntime?.status === "failed" &&
-    serverRuntime.lastErrorClass === "usage_limit" &&
-    activeThreadShell?.latestRun
+    usageLimitStopped && activeThreadShell?.latestRun
       ? usageLimitRecoveryBannerItem({
+          medulaResumeTitle: medulaResumeTitle(medulaResume, activeThreadShell.id),
           runId: activeThreadShell.latestRun.runId,
           resetAt: serverRuntime.usageLimitResetAt ?? null,
           stoppedAt: activeThreadShell.latestRun.completedAt ?? activeThreadShell.updatedAt,

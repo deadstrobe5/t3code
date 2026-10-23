@@ -73,7 +73,11 @@ function isSameOrigin(url: string): boolean {
   );
 }
 
-async function getPrimaryJson<T>(pathname: string, params?: Record<string, string>): Promise<T> {
+/** GET a JSON route of the primary environment with its session cookie or desktop token. */
+export async function getPrimaryJson<T>(
+  pathname: string,
+  params?: Record<string, string>,
+): Promise<T> {
   const url = resolvePrimaryEnvironmentHttpUrl(pathname, params);
   const sameOrigin = isSameOrigin(url);
   const token = sameOrigin ? null : await readDesktopPrimaryBearerToken();
