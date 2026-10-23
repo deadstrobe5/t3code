@@ -16,7 +16,7 @@ import {
   type MedulaWorkerList,
   type MedulaWorkerLog,
   type MedulaWorkerTone,
-} from "./medulaWorkers";
+} from "./medulaWorkerModel";
 
 const FINISHED_SHOWN = 5;
 
