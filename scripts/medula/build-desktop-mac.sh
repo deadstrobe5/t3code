@@ -1,5 +1,5 @@
 #!/usr/bin/env bash
-# Build this fork as an ad-hoc-signed macOS desktop app (arm64 by default)
+# Build this fork as a locally signed macOS desktop app (arm64 by default)
 # that replaces an installed official one in place: same product name, bundle
 # id and user-data directory, so threads, settings and the T3 Connect login
 # carry over. The version is <upstream>-medula.<UTC timestamp>, and those
@@ -18,6 +18,8 @@
 #   T3CODE_MEDULA_DEFAULT_URL   Medula hub address used while the setting is
 #                               empty (the desktop page host is not the hub).
 #   T3_MEDULA_ARCH              arm64 (default) or x64.
+#   T3_MEDULA_SIGN_KEYCHAIN, T3_MEDULA_SIGN_PASSWORD_FILE, T3_MEDULA_SIGN_IDENTITY
+#                               local signing identity (missing: ad hoc).
 # The last line printed is the path of the .app.
 set -euo pipefail
 [ -n "${T3_MEDULA_ENV:-}" ] && . "$T3_MEDULA_ENV"
@@ -65,7 +67,17 @@ rm -rf "$out/app.new"
 mkdir -p "$out/app.new"
 ditto -x -k "$zip" "$out/app.new"
 app=$(ls -d "$out/app.new"/*.app | head -n 1)
-if ! codesign --verify --deep --strict "$app" 2>/dev/null; then
+# An ad-hoc signature changes with every build, so macOS asks for the
+# keychain password on each launch ("t3code Safe Storage"). A local
+# self-signed identity keeps the designated requirement stable across builds.
+sign_kc=${T3_MEDULA_SIGN_KEYCHAIN:-$HOME/Library/Keychains/t3-assinatura.keychain-db}
+sign_pw=${T3_MEDULA_SIGN_PASSWORD_FILE:-$HOME/.config/t3-assinatura/pw}
+sign_id=${T3_MEDULA_SIGN_IDENTITY:-9880D9E380FF98772AED94EABD25D240F0F1D97D}
+if [ -f "$sign_kc" ] && [ -f "$sign_pw" ]; then
+  echo "== signing with the local identity"
+  security unlock-keychain -p "$(cat "$sign_pw")" "$sign_kc"
+  codesign --force --deep --sign "$sign_id" --keychain "$sign_kc" "$app"
+elif ! codesign --verify --deep --strict "$app" 2>/dev/null; then
   echo "== ad-hoc signing"
   codesign --force --deep --sign - "$app"
 fi
