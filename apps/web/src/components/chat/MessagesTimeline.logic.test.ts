@@ -4205,3 +4205,138 @@ describe("shouldCollapseUserMessage", () => {
     expect(shouldCollapseUserMessage(`${citation} ${"More text. ".repeat(60)}`)).toBe(true);
   });
 });
+
+describe("reasoning replies", () => {
+  type WorkEntry = Extract<TimelineEntry, { kind: "work" }>;
+  const at = (second: number) => `2026-01-01T00:00:${String(second).padStart(2, "0")}Z`;
+  const prompt = (runId: string, second: number): TimelineEntry => ({
+    id: `${runId}-prompt-entry`,
+    kind: "message",
+    createdAt: at(second),
+    message: {
+      id: `${runId}-prompt` as never,
+      role: "user" as const,
+      text: "and the submission speed?",
+      runId: runId as never,
+      createdAt: at(second),
+      updatedAt: at(second),
+      streaming: false,
+    },
+  });
+  const work = (
+    runId: string,
+    id: string,
+    second: number,
+    fields: Omit<WorkEntry["entry"], "id" | "createdAt" | "runId" | "label">,
+  ): WorkEntry => ({
+    id: `${id}-entry`,
+    kind: "work",
+    createdAt: at(second),
+    entry: { id, createdAt: at(second), runId: runId as never, label: id, ...fields },
+  });
+  const thought = (runId: string, id: string, second: number, detail: string) =>
+    work(runId, id, second, {
+      itemType: "reasoning",
+      detail,
+      tone: "thinking" as const,
+      toolLifecycleStatus: "completed" as const,
+    });
+  const wakeup = (runId: string, second: number) =>
+    work(runId, `${runId}-wakeup`, second, {
+      itemType: "dynamic_tool",
+      toolTitle: "ScheduleWakeup",
+      tone: "tool" as const,
+      requestKind: "dynamic_tool",
+      toolLifecycleStatus: "completed" as const,
+    });
+  const replyEntries = [
+    prompt("turn-1", 0),
+    thought("turn-1", "first-thought", 2, "Checking the probe rate."),
+    work("turn-1", "probe", 3, {
+      command: "rg rate",
+      requestKind: "command",
+      tone: "tool" as const,
+      toolLifecycleStatus: "completed" as const,
+    }),
+    thought("turn-1", "last-thought", 5, "Confirmed: the probe fired 4.4 req/s; capped at 1."),
+    wakeup("turn-1", 6),
+  ];
+  const settled = {
+    runId: "turn-1" as never,
+    status: "completed" as const,
+    startedAt: at(0),
+    completedAt: at(6),
+  };
+
+  it("shows the last thought of a run that ends on a tool call with no text as the reply", () => {
+    const rows = deriveMessagesTimelineRows({
+      timelineEntries: replyEntries,
+      latestRun: settled,
+      isWorking: false,
+      turnDiffSummaries: [],
+      supportsConversationRollback: false,
+    });
+
+    const reply = rows.find(
+      (row): row is Extract<MessagesTimelineRow, { kind: "message" }> =>
+        row.kind === "message" && row.message.role === "assistant",
+    );
+    expect(reply?.id).toBe("last-thought-entry");
+    expect(reply?.message.text).toBe("Confirmed: the probe fired 4.4 req/s; capped at 1.");
+    expect(reply?.showAssistantMeta).toBe(true);
+    expect(rows.find((row) => row.kind === "turn-fold")).toMatchObject({
+      label: "Worked for 6.0s",
+    });
+    const visibleWorkIds = rows.flatMap((row) =>
+      row.kind === "work" ? row.groupedEntries.map((entry) => entry.id) : [],
+    );
+    expect(visibleWorkIds).not.toContain("first-thought");
+  });
+
+  it("keeps thoughts as work while the run is still going", () => {
+    const rows = deriveMessagesTimelineRows({
+      timelineEntries: replyEntries,
+      latestRun: { ...settled, status: "running", completedAt: null },
+      isWorking: true,
+      activeTurnStartedAt: at(0),
+      turnDiffSummaries: [],
+      supportsConversationRollback: false,
+    });
+
+    expect(rows.some((row) => row.kind === "message" && row.message.role === "assistant")).toBe(
+      false,
+    );
+  });
+
+  it("leaves thoughts folded when the run has an assistant text reply", () => {
+    const rows = deriveMessagesTimelineRows({
+      timelineEntries: [
+        ...replyEntries.slice(0, 4),
+        {
+          id: "text-reply-entry",
+          kind: "message",
+          createdAt: at(5),
+          message: {
+            id: "text-reply" as never,
+            role: "assistant" as const,
+            text: "Capped at 1 req/s.",
+            runId: "turn-1" as never,
+            createdAt: at(5),
+            updatedAt: at(5),
+            streaming: false,
+          },
+        },
+        wakeup("turn-1", 6),
+      ],
+      latestRun: settled,
+      isWorking: false,
+      turnDiffSummaries: [],
+      supportsConversationRollback: false,
+    });
+
+    const replies = rows.filter(
+      (row) => row.kind === "message" && row.message.role === "assistant",
+    );
+    expect(replies.map((row) => row.id)).toEqual(["text-reply-entry"]);
+  });
+});

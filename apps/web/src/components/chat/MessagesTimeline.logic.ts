@@ -1350,8 +1350,76 @@ function settleSupersededReasoning(entries: ReadonlyArray<TimelineEntry>) {
   });
 }
 
-function timelineRowEntries(entries: ReadonlyArray<TimelineEntry>) {
-  return withoutSubagentDelegationRows(settleSupersededReasoning(entries));
+const reasoningReplyEntries = new WeakMap<TimelineEntry, TimelineEntry>();
+
+/**
+ * A Claude turn can end on a tool call (ScheduleWakeup, SendMessage) whose
+ * only prose is the thinking block before it: the reply was written there and
+ * no assistant text ever arrives. Once such a run settles, its last thought is
+ * the answer, so it shows as the reply instead of folding under "Worked for".
+ */
+function promoteReasoningReplies(
+  entries: ReadonlyArray<TimelineEntry>,
+  unsettledRunId: RunId | null,
+): ReadonlyArray<TimelineEntry> {
+  const runsWithReply = new Set<RunId>();
+  const lastThoughtIndexByRunId = new Map<RunId, number>();
+  for (const [index, entry] of entries.entries()) {
+    if (entry.kind === "message") {
+      if (entry.message.role === "assistant" && entry.message.runId !== null) {
+        runsWithReply.add(entry.message.runId);
+      }
+      continue;
+    }
+    const runId = entry.kind === "work" ? (entry.entry.runId ?? null) : null;
+    if (
+      runId === null ||
+      runId === unsettledRunId ||
+      entry.kind !== "work" ||
+      entry.entry.itemType !== "reasoning" ||
+      entry.entry.toolLifecycleStatus === "inProgress" ||
+      !entry.entry.detail?.trim()
+    ) {
+      continue;
+    }
+    lastThoughtIndexByRunId.set(runId, index);
+  }
+  const promotedIndexes = new Set(
+    [...lastThoughtIndexByRunId].flatMap(([runId, index]) =>
+      runsWithReply.has(runId) ? [] : [index],
+    ),
+  );
+  if (promotedIndexes.size === 0) return entries;
+  return entries.map((entry, index) => {
+    if (!promotedIndexes.has(index) || entry.kind !== "work") return entry;
+    let promoted = reasoningReplyEntries.get(entry);
+    if (!promoted) {
+      const at = entry.entry.createdAt;
+      promoted = {
+        id: entry.id,
+        kind: "message",
+        createdAt: entry.createdAt,
+        message: {
+          id: `reasoning-reply:${entry.entry.id}` as MessageId,
+          role: "assistant",
+          text: entry.entry.detail?.trim() ?? "",
+          runId: entry.entry.runId ?? null,
+          streaming: false,
+          createdAt: at,
+          updatedAt: at,
+        },
+        ...(entry.attempt === undefined ? {} : { attempt: entry.attempt }),
+      };
+      reasoningReplyEntries.set(entry, promoted);
+    }
+    return promoted;
+  });
+}
+
+function timelineRowEntries(entries: ReadonlyArray<TimelineEntry>, unsettledRunId: RunId | null) {
+  return withoutSubagentDelegationRows(
+    promoteReasoningReplies(settleSupersededReasoning(entries), unsettledRunId),
+  );
 }
 
 function deriveTimelineTurnFolds(
@@ -1360,8 +1428,8 @@ function deriveTimelineTurnFolds(
     "timelineEntries" | "latestRun" | "isWorking" | "runlessWorkActive" | "runningRunId"
   >,
 ) {
-  const timelineEntries = timelineRowEntries(input.timelineEntries);
   const unsettledRunId = deriveUnsettledRunId(input.latestRun ?? null, input.runningRunId ?? null);
+  const timelineEntries = timelineRowEntries(input.timelineEntries, unsettledRunId);
   const failedRunIds = failedTimelineRunIds(timelineEntries, input.latestRun ?? null);
   const activeVisualResponseRunIds = deriveActiveVisualResponseRunIds({
     timelineEntries,
@@ -1397,14 +1465,14 @@ export function deriveMessagesTimelineRows(input: {
   liveAgentTaskIds?: ReadonlySet<string> | undefined;
   worktreeSetup?: WorktreeSetupSnapshot | null;
 }): MessagesTimelineRow[] {
-  const timelineEntries = timelineRowEntries(input.timelineEntries);
+  const unsettledRunId = deriveUnsettledRunId(input.latestRun ?? null, input.runningRunId ?? null);
+  const timelineEntries = timelineRowEntries(input.timelineEntries, unsettledRunId);
   const turnDiffSummaryByAssistantMessageId = new Map<MessageId, TurnDiffSummary>();
   for (const summary of input.turnDiffSummaries) {
     if (summary.assistantMessageId) {
       turnDiffSummaryByAssistantMessageId.set(summary.assistantMessageId, summary);
     }
   }
-  const unsettledRunId = deriveUnsettledRunId(input.latestRun ?? null, input.runningRunId ?? null);
   const revertTurnCountByUserMessageId = input.supportsConversationRollback
     ? deriveRevertTurnCountByUserMessageId({
         timelineEntries: timelineEntries,
