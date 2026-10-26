@@ -1131,6 +1131,14 @@ function deriveTurnFolds(input: {
       }
       if (entry.kind === "work" && entry.entry.itemType === "notification") continue;
       if (entry.kind === "work" && entry.entry.questionAnswer !== undefined) continue;
+      // Every assistant text stays in view, even when the turn ends on a tool.
+      if (
+        entry.kind === "message" &&
+        entry.message.role === "assistant" &&
+        assistantTextIsReply(entry.message.text)
+      ) {
+        continue;
+      }
       hiddenEntryIds.add(entry.id);
     }
     if (hiddenEntryIds.size === 0) {
@@ -1352,22 +1360,30 @@ function settleSupersededReasoning(entries: ReadonlyArray<TimelineEntry>) {
 
 const reasoningReplyEntries = new WeakMap<TimelineEntry, TimelineEntry>();
 
+/** Assistant text with at least one word is something the user must see. */
+function assistantTextIsReply(text: string | null | undefined): boolean {
+  return /[\p{L}\p{N}]/u.test(text ?? "");
+}
+
 /**
- * A Claude turn can end on a tool call (ScheduleWakeup, SendMessage) whose
- * only prose is the thinking block before it: the reply was written there and
- * no assistant text ever arrives. Once such a run settles, its last thought is
- * the answer, so it shows as the reply instead of folding under "Worked for".
+ * A Claude turn can end on a tool call (ScheduleWakeup) with its reply written
+ * in the thinking before it. Once the run settles, a last thought that comes
+ * after the run's last assistant text shows as the reply, not under "Worked for".
  */
 function promoteReasoningReplies(
   entries: ReadonlyArray<TimelineEntry>,
   unsettledRunId: RunId | null,
 ): ReadonlyArray<TimelineEntry> {
-  const runsWithReply = new Set<RunId>();
+  const lastReplyIndexByRunId = new Map<RunId, number>();
   const lastThoughtIndexByRunId = new Map<RunId, number>();
   for (const [index, entry] of entries.entries()) {
     if (entry.kind === "message") {
-      if (entry.message.role === "assistant" && entry.message.runId !== null) {
-        runsWithReply.add(entry.message.runId);
+      if (
+        entry.message.role === "assistant" &&
+        entry.message.runId !== null &&
+        assistantTextIsReply(entry.message.text)
+      ) {
+        lastReplyIndexByRunId.set(entry.message.runId, index);
       }
       continue;
     }
@@ -1386,7 +1402,7 @@ function promoteReasoningReplies(
   }
   const promotedIndexes = new Set(
     [...lastThoughtIndexByRunId].flatMap(([runId, index]) =>
-      runsWithReply.has(runId) ? [] : [index],
+      (lastReplyIndexByRunId.get(runId) ?? -1) > index ? [] : [index],
     ),
   );
   if (promotedIndexes.size === 0) return entries;
