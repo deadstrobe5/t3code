@@ -22,6 +22,7 @@ import { OpenInPicker } from "./OpenInPicker";
 import { ThreadDetailsSection } from "./ThreadDetailsSection";
 import { ThreadAutomationsPanel } from "./ThreadAutomationsPanel";
 import { ThreadRelationshipsPanel } from "./ThreadRelationshipsControl";
+import { BackgroundActivityCard } from "../../medula/BackgroundActivityCard";
 
 const GitActionsControl = memo(BaseGitActionsControl);
 
@@ -190,6 +191,12 @@ export function ThreadDetailsPanel(props: ThreadDetailsPanelProps) {
             <ThreadRelationshipsPanel
               environmentId={props.environmentId}
               threadId={props.threadId}
+              beforePrevious={
+                <BackgroundActivityCard
+                  environmentId={props.environmentId}
+                  threadId={props.threadId}
+                />
+              }
             />
           ) : null}
         </>
