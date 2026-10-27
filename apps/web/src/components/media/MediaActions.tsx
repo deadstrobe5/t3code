@@ -93,8 +93,13 @@ export function useMediaActions(source: MediaActionSource) {
     if (!url) throw new Error("The environment returned an invalid media URL.");
     return url;
   };
+  // The URL on screen already loaded, so it backs up the fresh one if that cannot be reached.
+  const actionSources = async () => {
+    const url = await actionUrl();
+    return source.src ? [url, source.src] : [url];
+  };
   const save = async () => {
-    await downloadMedia(await actionUrl(), mediaFileName(source));
+    await downloadMedia(await actionSources(), mediaFileName(source));
   };
   const copyImage = async () => {
     assertCanReadMedia();
@@ -105,7 +110,7 @@ export function useMediaActions(source: MediaActionSource) {
     }
     // Start the clipboard write in the user gesture; fetching/decoding may finish later.
     await navigator.clipboard.write([
-      new ClipboardItem({ "image/png": actionUrl().then(readMediaPng) }),
+      new ClipboardItem({ "image/png": actionSources().then(readMediaPng) }),
     ]);
   };
   return { save, copyImage, canReadMedia, assertCanReadMedia };

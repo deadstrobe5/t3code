@@ -184,3 +184,15 @@ it.each(["save", "copy-image", "open-file"])(
     expect(state.openFile).not.toHaveBeenCalled();
   },
 );
+
+it("offers the URL already on screen after the freshly minted one", async () => {
+  state.sessions.set(environmentId, granted);
+  const source = { ...hostSource(), src: "http://tailnet.test/api/assets/old/image.png" };
+
+  await useMediaActions(source).copyImage();
+  await useMediaActions(source).save();
+
+  const sources = ["https://host.test/api/assets/image.png", source.src];
+  expect(state.png).toHaveBeenCalledWith(sources);
+  expect(state.download).toHaveBeenCalledWith(sources, "image.png");
+});

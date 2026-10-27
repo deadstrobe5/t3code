@@ -6,14 +6,26 @@ export function resolveProtocolRelativeMediaUrl(src: string): string {
   return `${protocol}${src}`;
 }
 
-async function readMediaBlob(src: string): Promise<Blob> {
-  let response: Response;
-  try {
-    response = await fetch(src);
-  } catch (cause) {
+/**
+ * Tries each source in order. Only a fetch that never got a response moves on: a freshly minted
+ * asset URL can point at a route the browser cannot reach while the URL already on screen still
+ * loads.
+ */
+async function readMediaBlob(sources: ReadonlyArray<string>): Promise<Blob> {
+  let response: Response | undefined;
+  let failure: unknown;
+  for (const src of new Set(sources)) {
+    try {
+      response = await fetch(src);
+      break;
+    } catch (cause) {
+      failure = cause;
+    }
+  }
+  if (!response) {
     throw new Error(
       "The file could not be fetched. The host may block browser access (CORS), or the connection may be unavailable.",
-      { cause },
+      { cause: failure },
     );
   }
   if (!response.ok) throw new Error(`The file could not be fetched (HTTP ${response.status}).`);
@@ -24,8 +36,8 @@ async function readMediaBlob(src: string): Promise<Blob> {
   return blob;
 }
 
-export async function downloadMedia(src: string, name: string): Promise<void> {
-  const url = URL.createObjectURL(await readMediaBlob(src));
+export async function downloadMedia(sources: ReadonlyArray<string>, name: string): Promise<void> {
+  const url = URL.createObjectURL(await readMediaBlob(sources));
   try {
     const anchor = document.createElement("a");
     anchor.href = url;
@@ -36,8 +48,8 @@ export async function downloadMedia(src: string, name: string): Promise<void> {
   }
 }
 
-export async function readMediaPng(src: string): Promise<Blob> {
-  const blob = await readMediaBlob(src);
+export async function readMediaPng(sources: ReadonlyArray<string>): Promise<Blob> {
+  const blob = await readMediaBlob(sources);
   if (blob.type.split(";", 1)[0] === "image/png") return blob;
 
   const url = URL.createObjectURL(blob);
