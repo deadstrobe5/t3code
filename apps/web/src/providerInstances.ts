@@ -172,13 +172,25 @@ export function sortProviderInstanceEntries(
       byKind.set(entry.driverKind, [entry]);
     }
   }
-  const sorted: ProviderInstanceEntry[] = [];
+  // One lead per driver (its enabled default, else its first enabled entry), then
+  // every other instance at the end, so extra accounts of one driver do not push
+  // the other drivers down the list.
+  const leads: ProviderInstanceEntry[] = [];
+  const rest: ProviderInstanceEntry[] = [];
   for (const bucket of byKind.values()) {
-    const defaults = bucket.filter((entry) => entry.isDefault);
-    const customs = bucket.filter((entry) => !entry.isDefault);
-    sorted.push(...defaults, ...customs);
+    const lead =
+      bucket.find((entry) => entry.isDefault && entry.enabled) ??
+      bucket.find((entry) => entry.enabled) ??
+      bucket.find((entry) => entry.isDefault) ??
+      bucket[0];
+    leads.push(lead!);
+    const others = bucket.filter((entry) => entry !== lead);
+    rest.push(
+      ...others.filter((entry) => entry.isDefault),
+      ...others.filter((entry) => !entry.isDefault),
+    );
   }
-  return sorted;
+  return [...leads, ...rest];
 }
 
 function getProviderInstanceEntry(
