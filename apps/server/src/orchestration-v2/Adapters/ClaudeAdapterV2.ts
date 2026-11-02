@@ -140,6 +140,12 @@ import {
 import * as ServerConfig from "../../config.ts";
 import * as ServerSettings from "../../serverSettings.ts";
 import { AdoptableSessions, inputStalledMessage } from "../../medula/adoptableSessions.ts";
+import {
+  approvalExpiredMessage,
+  describeApprovalRequest,
+  notifyApprovalExpired,
+  readApprovalTimeoutMs,
+} from "../../medula/approvalTimeout.ts";
 import { expandHomePath } from "@t3tools/provider-core/server/pathExpansion";
 import { spawnAndCollect } from "@t3tools/provider-core/server/snapshotProbe";
 import { signalProcessGroup } from "@t3tools/provider-core/server/processGroup";
@@ -3263,9 +3269,14 @@ function toSessionPermissionUpdates(
   ];
 }
 
+/**
+ * Waits for the user's answer. With `timeoutMs` (medula) an unanswered prompt
+ * is declined after that long, so a prompt nobody sees cannot hold the turn.
+ */
 export const awaitClaudeApprovalDecision = Effect.fn("awaitClaudeApprovalDecision")(function* (
   decision: Deferred.Deferred<ClaudeApprovalResponse>,
   signal: AbortSignal,
+  timeoutMs: number | null = null,
 ) {
   const cancellation = Effect.callback<ClaudeApprovalResponse>((resume) => {
     const abort = () => resume(Effect.succeed({ decision: "cancel" }));
@@ -3275,7 +3286,21 @@ export const awaitClaudeApprovalDecision = Effect.fn("awaitClaudeApprovalDecisio
     }
     return Effect.sync(() => signal.removeEventListener("abort", abort));
   });
-  return yield* Effect.raceFirst(Deferred.await(decision), cancellation);
+  const answered: Effect.Effect<ClaudeApprovalOutcome> = Effect.raceFirst(
+    Deferred.await(decision),
+    cancellation,
+  );
+  if (timeoutMs === null) {
+    return yield* answered;
+  }
+  const expired: Effect.Effect<ClaudeApprovalOutcome> = Effect.sleep(timeoutMs).pipe(
+    Effect.as({
+      decision: "decline",
+      feedback: approvalExpiredMessage(timeoutMs),
+      expired: true,
+    }),
+  );
+  return yield* Effect.raceFirst(answered, expired);
 });
 
 const awaitClaudeUserInputAnswers = Effect.fn("awaitClaudeUserInputAnswers")(function* (
@@ -3932,6 +3957,9 @@ type ClaudeApprovalResponse = {
   readonly decision: ProviderApprovalDecision;
   readonly feedback?: string;
 };
+
+/** The answer, or the decline the medula ceiling made when nobody answered. */
+type ClaudeApprovalOutcome = ClaudeApprovalResponse & { readonly expired?: boolean };
 
 type PendingClaudeRuntimeRequest =
   | {
@@ -9434,9 +9462,11 @@ export const makeClaudeAdapterV2 = Effect.fn("makeClaudeAdapterV2")(function* (
             { concurrency: 1 },
           );
 
-          const resolvedDecision = yield* awaitClaudeApprovalDecision(
+          const approvalTimeoutMs = readApprovalTimeoutMs();
+          const { expired, ...resolvedDecision } = yield* awaitClaudeApprovalDecision(
             decision,
             callbackOptions.signal,
+            approvalTimeoutMs,
           ).pipe(
             Effect.ensuring(
               Ref.update(pendingRuntimeRequests, (current) => {
@@ -9446,6 +9476,52 @@ export const makeClaudeAdapterV2 = Effect.fn("makeClaudeAdapterV2")(function* (
               }),
             ),
           );
+
+          if (expired === true) {
+            const expiredAt = yield* DateTime.now;
+            yield* Effect.all(
+              [
+                emitProviderEvent({
+                  type: "runtime_request.updated",
+                  driver: CLAUDE_PROVIDER,
+                  runtimeRequest: {
+                    ...artifacts.request,
+                    status: "expired",
+                    responseCapability: {
+                      type: "not_resumable",
+                      reason: resolvedDecision.feedback ?? "approval expired",
+                    },
+                    resolvedAt: expiredAt,
+                  },
+                }),
+                emitProviderEvent({
+                  type: "node.updated",
+                  driver: CLAUDE_PROVIDER,
+                  node: { ...artifacts.node, status: "cancelled", completedAt: expiredAt },
+                }),
+                emitProviderEvent({
+                  type: "turn_item.updated",
+                  driver: CLAUDE_PROVIDER,
+                  turnItem: {
+                    ...artifacts.turnItem,
+                    status: "cancelled",
+                    completedAt: expiredAt,
+                    updatedAt: expiredAt,
+                  },
+                }),
+              ],
+              { concurrency: 1 },
+            );
+            yield* Effect.logWarning("Claude approval expired without an answer", {
+              threadId: context.input.threadId,
+              toolName,
+              timeoutMs: approvalTimeoutMs,
+            });
+            notifyApprovalExpired({
+              thread: String(context.input.threadId),
+              request: describeApprovalRequest(toolName, toolInput, prompt),
+            });
+          }
 
           return permissionResultFromDecision({
             toolName,

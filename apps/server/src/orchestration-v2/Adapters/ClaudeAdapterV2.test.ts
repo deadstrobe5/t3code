@@ -5,7 +5,7 @@ import * as NodePath from "node:path";
 import * as NodeStream from "node:stream";
 
 import * as ClaudeSdk from "@anthropic-ai/claude-agent-sdk";
-import { beforeEach, vi } from "vite-plus/test";
+import { beforeEach, expect, vi } from "vite-plus/test";
 
 import type {
   Query as ClaudeQuery,
@@ -841,6 +841,192 @@ describe("ClaudeAdapterV2 Auto-accept edits", () => {
           decision: "accept",
         });
         assert.equal((yield* Fiber.join(decision))?.behavior, "allow");
+      }).pipe(
+        Effect.provide(
+          Layer.mergeAll(IdAllocator.layer, McpProviderSessions.layer, NodeServices.layer),
+        ),
+      ),
+    ),
+  );
+});
+
+describe("ClaudeAdapterV2 approval ceiling (medula)", () => {
+  it.effect("declines an unanswered approval when the ceiling passes", () =>
+    Effect.gen(function* () {
+      const decision = yield* Deferred.make<{
+        decision: ProviderApprovalDecision;
+        feedback?: string;
+      }>();
+      const waiting = yield* ClaudeAdapterV2.awaitClaudeApprovalDecision(
+        decision,
+        new AbortController().signal,
+        180_000,
+      ).pipe(Effect.forkChild);
+
+      yield* TestClock.adjust("179 seconds");
+      assert.isUndefined(waiting.pollUnsafe(), "declined before the ceiling");
+      yield* TestClock.adjust("1 second");
+      assert.isDefined(waiting.pollUnsafe(), "still waiting after the ceiling");
+      const result = yield* Fiber.join(waiting);
+
+      assert.equal(result.decision, "decline");
+      assert.isTrue(result.expired);
+      assert.include(result.feedback ?? "", "aprovação expirou sem resposta ao fim de 3 min");
+      assert.include(result.feedback ?? "", "git -C");
+    }),
+  );
+
+  it.effect("keeps the user's answer when it arrives before the ceiling", () =>
+    Effect.gen(function* () {
+      const decision = yield* Deferred.make<{
+        decision: ProviderApprovalDecision;
+        feedback?: string;
+      }>();
+      const waiting = yield* ClaudeAdapterV2.awaitClaudeApprovalDecision(
+        decision,
+        new AbortController().signal,
+        180_000,
+      ).pipe(Effect.forkChild);
+
+      yield* TestClock.adjust("60 seconds");
+      yield* Deferred.succeed(decision, { decision: "accept" });
+      const result = yield* Fiber.join(waiting);
+      yield* TestClock.adjust("10 minutes");
+
+      assert.deepEqual(result, { decision: "accept" });
+    }),
+  );
+
+  it.live("denies the tool, expires the request and pushes a notice", () =>
+    Effect.scoped(
+      Effect.gen(function* () {
+        const fileSystem = yield* FileSystem.FileSystem;
+        const idAllocator = yield* IdAllocator.IdAllocatorV2;
+        const tempDir = yield* fileSystem.makeTempDirectoryScoped({
+          prefix: "t3-claude-approval-ceiling-",
+        });
+        const pushedFile = NodePath.join(tempDir, "pushed.txt");
+        const notifier = NodePath.join(tempDir, "push.sh");
+        NodeFS.writeFileSync(notifier, `#!/bin/sh\nprintf '%s|%s' "$1" "$2" > '${pushedFile}'\n`);
+        NodeFS.chmodSync(notifier, 0o755);
+        yield* Effect.acquireRelease(
+          Effect.sync(() => {
+            const previous = {
+              timeout: process.env.T3CODE_MEDULA_APROVACAO_TETO_S,
+              notify: process.env.T3CODE_MEDULA_APROVACAO_AVISO,
+            };
+            process.env.T3CODE_MEDULA_APROVACAO_TETO_S = "0.05";
+            process.env.T3CODE_MEDULA_APROVACAO_AVISO = notifier;
+            return previous;
+          }),
+          (previous) =>
+            Effect.sync(() => {
+              for (const [key, value] of [
+                ["T3CODE_MEDULA_APROVACAO_TETO_S", previous.timeout],
+                ["T3CODE_MEDULA_APROVACAO_AVISO", previous.notify],
+              ] as const) {
+                if (value === undefined) delete process.env[key];
+                else process.env[key] = value;
+              }
+            }),
+        );
+        let openedOptions: ClaudeAdapterV2.ClaudeAgentSdkQueryOptions | undefined;
+        const adapter = yield* ClaudeAdapterV2.makeClaudeAdapterV2({
+          instanceId: ClaudeAdapterV2.CLAUDE_DEFAULT_INSTANCE_ID,
+          settings: DEFAULT_CLAUDE_SETTINGS,
+          environment: {},
+          attachmentsDir: tempDir,
+          fileSystem,
+          path: yield* Path.Path,
+          crypto: yield* Crypto.Crypto,
+          idAllocator,
+          queryRunner: {
+            allocateSessionId: Effect.succeed("native-thread-claude-approval-ceiling"),
+            open: (input) =>
+              Effect.sync(() => {
+                openedOptions = input.options;
+                return {
+                  messages: Stream.never,
+                  offer: () => Effect.void,
+                  setModel: () => Effect.void,
+                  applyFlagSettings: () => Effect.void,
+                  setPermissionMode: () => Effect.void,
+                  backgroundTasks: () => Effect.succeed(false),
+                  stopTask: () => Effect.void,
+                  interrupt: Effect.void,
+                  close: Effect.void,
+                };
+              }),
+            forkSession: () => Effect.die("unused"),
+            subagentLaunchToolUseId: () => Effect.succeed(null),
+            assertComplete: Effect.void,
+          },
+        });
+        const runtimePolicy = ProviderAdapter.ProviderAdapterV2RuntimePolicy.make({
+          runtimeMode: "auto-accept-edits",
+          interactionMode: "default",
+          cwd: "/workspace",
+        });
+        const threadId = ThreadId.make("thread-claude-approval-ceiling");
+        const runtime = yield* adapter.openSession({
+          threadId,
+          providerSessionId: ProviderSessionId.make("provider-session-claude-approval-ceiling"),
+          modelSelection: CLAUDE_TEST_MODEL_SELECTION,
+          runtimePolicy,
+        });
+        const providerThread = yield* runtime.ensureThread({
+          threadId,
+          modelSelection: CLAUDE_TEST_MODEL_SELECTION,
+          runtimePolicy,
+        });
+        const now = yield* DateTime.now;
+        yield* runtime.startTurn(
+          makeClaudeTestTurnInput({
+            threadId,
+            providerThread,
+            now,
+            attemptId: RunAttemptId.make("attempt-claude-approval-ceiling"),
+            text: "Clean up.",
+            attachments: [],
+            runtimePolicy,
+          }),
+        );
+        const canUseTool = openedOptions?.canUseTool;
+        assert.isFunction(canUseTool);
+
+        const expiredEvent = yield* runtime.events.pipe(
+          Stream.filter(
+            (event) =>
+              event.type === "runtime_request.updated" && event.runtimeRequest.status === "expired",
+          ),
+          Stream.runHead,
+          Effect.forkScoped,
+        );
+        const result = yield* Effect.promise(() =>
+          canUseTool!(
+            "Bash",
+            { command: "rm -rf /tmp/x" },
+            {
+              signal: new AbortController().signal,
+              toolUseID: "tool-bash-approval-ceiling",
+              requestId: "request-bash-approval-ceiling",
+            },
+          ),
+        ).pipe(Effect.timeout("5 seconds"));
+
+        assert.equal(result?.behavior, "deny");
+        if (result?.behavior !== "deny") return;
+        assert.include(result.message, "aprovação expirou sem resposta");
+        assert.notEqual(result.interrupt, true);
+        const expired = yield* Fiber.join(expiredEvent).pipe(Effect.timeout("5 seconds"));
+        assert.isTrue(Option.isSome(expired));
+        yield* Effect.promise(() =>
+          expect
+            .poll(() =>
+              NodeFS.existsSync(pushedFile) ? NodeFS.readFileSync(pushedFile, "utf8") : null,
+            )
+            .toBe(`T3: aprovação expirou|${threadId} Bash: rm -rf /tmp/x`),
+        );
       }).pipe(
         Effect.provide(
           Layer.mergeAll(IdAllocator.layer, McpProviderSessions.layer, NodeServices.layer),
