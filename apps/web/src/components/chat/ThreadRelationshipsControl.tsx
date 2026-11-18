@@ -490,6 +490,8 @@ export function ThreadRelationshipsPanel(props: {
   readonly threadId: ThreadId;
   readonly showLineage: boolean;
   readonly showSideChats: boolean;
+  /** Rendered between the live lineage and "Previous agents" (the medula «Em fundo» card). */
+  readonly beforePrevious?: ReactNode;
 }) {
   const gt = useGT();
   const m = useMessages();
@@ -692,7 +694,7 @@ export function ThreadRelationshipsPanel(props: {
   const runningSideChats = sideChats.filter(({ edge }) => edge.status === "running").length;
 
   if (!lineageVisible && !sideChatsVisible) {
-    return null;
+    return props.beforePrevious ?? null;
   }
 
   // Idle children can be omitted from the shell; opening one loads its own detail.
@@ -1058,9 +1060,44 @@ export function ThreadRelationshipsPanel(props: {
     );
   };
 
+  const lineageHeadingVisible =
+    runningCount > 0 ||
+    canDetach ||
+    related.length > 0 ||
+    active.length > 0 ||
+    remoteActive.length > 0 ||
+    delegatedFrom !== undefined;
+  // Medula: "Previous agents" gets its own section so the «Em fundo» card can sit between it and
+  // the live lineage.
+  const previousGroup = groups.find((group) => group.id === "previous");
+  const liveGroups = groups.filter((group) => group.id !== "previous");
+  const renderGroup = (group: (typeof groups)[number]) => (
+    <ThreadLineageGroup key={`${scopedThreadKey(ref)}:${group.id}`} {...group}>
+      {(visibleRows) =>
+        visibleRows.map((row) =>
+          "remote" in row ? (
+            <RemoteSubagentRow
+              key={row.remote.id}
+              agent={row.remote}
+              parentRef={ref}
+              // Its provider instance belongs to the environment it runs in.
+              provider={providersByEnvironment
+                .get(row.remote.remoteChild.environmentId)
+                ?.find((entry) => entry.instanceId === row.remote.providerInstanceId)}
+              anyInstanceBadge={hasInstanceBadge(providerEntries)}
+            />
+          ) : (
+            renderRelationshipRow(row)
+          ),
+        )
+      }
+    </ThreadLineageGroup>
+  );
+
   return (
     <>
-      {lineageVisible ? (
+      {lineageVisible &&
+      (lineageHeadingVisible || liveGroups.some((group) => group.rows.length > 0)) ? (
         <ThreadDetailsSection
           headingId="thread-details-lineage-heading"
           title={
@@ -1069,14 +1106,7 @@ export function ThreadRelationshipsPanel(props: {
               : gt("Lineage", { $context: "thread details section: parent and child agents" })
           }
           // A lone "Previous agents" row names itself; the heading returns for status or actions.
-          showHeading={
-            runningCount > 0 ||
-            canDetach ||
-            related.length > 0 ||
-            active.length > 0 ||
-            remoteActive.length > 0 ||
-            delegatedFrom !== undefined
-          }
+          showHeading={lineageHeadingVisible}
           data-thread-relationships-panel
           actions={
             canDetach ? (
@@ -1113,28 +1143,17 @@ export function ThreadRelationshipsPanel(props: {
               />
             </ThreadLineageRowList>
           )}
-          {groups.map((group) => (
-            <ThreadLineageGroup key={`${scopedThreadKey(ref)}:${group.id}`} {...group}>
-              {(visibleRows) =>
-                visibleRows.map((row) =>
-                  "remote" in row ? (
-                    <RemoteSubagentRow
-                      key={row.remote.id}
-                      agent={row.remote}
-                      parentRef={ref}
-                      // Its provider instance belongs to the environment it runs in.
-                      provider={providersByEnvironment
-                        .get(row.remote.remoteChild.environmentId)
-                        ?.find((entry) => entry.instanceId === row.remote.providerInstanceId)}
-                      anyInstanceBadge={hasInstanceBadge(providerEntries)}
-                    />
-                  ) : (
-                    renderRelationshipRow(row)
-                  ),
-                )
-              }
-            </ThreadLineageGroup>
-          ))}
+          {liveGroups.map(renderGroup)}
+        </ThreadDetailsSection>
+      ) : null}
+      {props.beforePrevious}
+      {props.showLineage && previousGroup !== undefined && previousGroup.rows.length > 0 ? (
+        <ThreadDetailsSection
+          headingId="thread-details-previous-agents-heading"
+          title={gt("Previous agents")}
+          showHeading={false}
+        >
+          {renderGroup(previousGroup)}
         </ThreadDetailsSection>
       ) : null}
       {sideChatsVisible ? (

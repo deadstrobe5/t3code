@@ -4,6 +4,7 @@ import * as Effect from "effect/Effect";
 import * as Layer from "effect/Layer";
 import * as Stream from "effect/Stream";
 import type { OrchestrationV2DomainEvent } from "@t3tools/contracts";
+import * as MedulaAutoResume from "../medula/autoResume.ts";
 import * as DueHint from "../scheduling/DueHint.ts";
 import * as Scheduler from "../scheduling/Scheduler.ts";
 import { forkParked } from "../serverActivation.ts";
@@ -20,6 +21,8 @@ export function limitRecoveryCommand(
   autoResume: boolean,
   nowMs: number,
   snooze = false,
+  /** Medula: resume at `dueMs` instead of the reset, with this text. */
+  medula?: { readonly dueMs?: number; readonly text?: string },
 ): OrchestrationV2Command | null {
   if (
     thread.status !== "failed" ||
@@ -57,7 +60,7 @@ export function limitRecoveryCommand(
   }
   if (
     !recovery.autoResume ||
-    resetMs > nowMs ||
+    (medula?.dueMs ?? resetMs) > nowMs ||
     (thread.snoozedUntil != null && DateTime.toEpochMillis(thread.snoozedUntil) > nowMs)
   )
     return null;
@@ -71,7 +74,7 @@ export function limitRecoveryCommand(
     ...(recovery.requestId === undefined
       ? {}
       : { usageLimitRecoveryRequestId: recovery.requestId }),
-    text: "Continue where you left off.",
+    text: medula?.text ?? "Continue where you left off.",
     attachments: [],
     dispatchMode: { type: "start_immediately" },
     createdBy: "agent",
@@ -88,6 +91,16 @@ const affectsLimitRecovery = (event: OrchestrationV2DomainEvent) =>
   event.type.startsWith("provider-session.") ||
   (event.type === "turn-item.updated" && event.payload.type === "error");
 
+const quotaReturnReaders = new Map<string, (nowMs: number) => Promise<number | null>>();
+const readQuotaReturn = (command: string) => {
+  let reader = quotaReturnReaders.get(command);
+  if (reader === undefined) {
+    reader = MedulaAutoResume.makeQuotaReturnReader(command);
+    quotaReturnReaders.set(command, reader);
+  }
+  return reader;
+};
+
 const makeSweep = Effect.gen(function* () {
   const projections = yield* ProjectionStore.ProjectionStoreV2;
   const threads = yield* ThreadManagement.ThreadManagementService;
@@ -103,23 +116,46 @@ const makeSweep = Effect.gen(function* () {
   return Effect.fn("UsageLimitRecoveryWorker.sweep", { attributes: routineSpan })(function* () {
     const now = yield* DateTime.now;
     const nowMs = DateTime.toEpochMillis(now);
-    if (yield* due.isIdle(nowMs)) return;
+    const medula = MedulaAutoResume.readMedulaResumeConfig(process.env);
+    // Medula: a quota return can come before the reset and the pacer spaces
+    // resumes, so the reset-based idle hint would sleep through both.
+    if (!medula.enabled && (yield* due.isIdle(nowMs))) return;
     const readVersion = yield* due.version;
     const preferences = yield* settings.getSettings;
+    const autoResume = preferences.autoResumeLimitedThreads || medula.enabled;
+    const pacer = medula.enabled ? MedulaAutoResume.sharedResumePacer(medula.intervalMs) : null;
+    const quotaReturnMs =
+      medula.enabled && medula.command !== null
+        ? yield* Effect.promise(() => readQuotaReturn(medula.command!)(nowMs))
+        : null;
     const candidates = yield* projections.getLimitRecoveryCandidates({
-      now,
-      autoResume: preferences.autoResumeLimitedThreads,
+      // Medula lists every armed thread (for the "resumes at" banner, and a
+      // quota return may come before the reset) and lets the due time decide.
+      now: medula.enabled ? DateTime.add(now, { days: 365 }) : now,
+      autoResume,
       snooze: preferences.snoozeLimitedThreads,
     });
     let acted = false;
+    const dueMs = (thread: ProjectionStore.ProjectionLimitRecoveryCandidate) =>
+      MedulaAutoResume.resumeDueMs(Date.parse(thread.usageLimitResetAt ?? ""), quotaReturnMs);
+    pacer?.setWaiting(
+      candidates
+        .map((thread) => ({ threadId: thread.id, dueMs: dueMs(thread) }))
+        .filter((entry) => Number.isFinite(entry.dueMs)),
+    );
     for (const thread of candidates) {
       const command = limitRecoveryCommand(
         thread,
-        preferences.autoResumeLimitedThreads,
+        autoResume,
         nowMs,
         preferences.snoozeLimitedThreads,
+        medula.enabled ? { dueMs: dueMs(thread), text: medula.text } : undefined,
       );
       if (command === null) continue;
+      if (command.type === "message.dispatch" && pacer !== null) {
+        if (!pacer.canDispatch(thread.id, nowMs)) continue;
+        pacer.recordDispatch(thread.id, nowMs);
+      }
       acted = true;
       yield* Effect.gen(function* () {
         if (command.type === "thread.metadata.update" && command.limitRecovery != null) {
@@ -141,7 +177,7 @@ const makeSweep = Effect.gen(function* () {
       );
     }
     // A sweep that acted, or failed to, re-checks on the next tick.
-    if (acted) return;
+    if (acted || medula.enabled) return;
     const wakeAt = yield* projections.getLimitRecoveryWakeAt(now);
     yield* due.record(readVersion, wakeAt ?? Infinity, nowMs);
   });

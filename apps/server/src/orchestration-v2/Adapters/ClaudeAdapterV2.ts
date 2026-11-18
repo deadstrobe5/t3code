@@ -198,6 +198,13 @@ import { NativeTelemetryClient } from "../../resourceTelemetry/NativeTelemetryCl
 import * as PortScanner from "../../preview/PortScanner.ts";
 import * as ProcessRunner from "../../processRunner.ts";
 import * as ServerSettings from "../../serverSettings.ts";
+import { AdoptableSessions, inputStalledMessage } from "../../medula/adoptableSessions.ts";
+import {
+  approvalExpiredMessage,
+  describeApprovalRequest,
+  notifyApprovalExpired,
+  readApprovalTimeoutMs,
+} from "../../medula/approvalTimeout.ts";
 import { expandHomePath } from "@t3tools/provider-core/server/pathExpansion";
 import { spawnAndCollect } from "@t3tools/provider-core/server/snapshotProbe";
 import { signalProcessGroup } from "@t3tools/provider-core/server/processGroup";
@@ -1665,6 +1672,18 @@ export const layerQueryRunner: Layer.Layer<
     const providerProcesses = yield* ProviderProcesses.ProviderProcesses;
     const platform = yield* HostProcess.Platform;
     const runFork = Effect.runForkWith(yield* Effect.context<never>());
+    // Medula: CLIs that outlive a server restart (medula/adoptableSessions.ts).
+    const serverConfig = yield* Effect.serviceOption(ServerConfig.ServerConfig);
+    const adoptable =
+      serverConfig._tag === "Some" && AdoptableSessions.enabled(process.env, platform)
+        ? new AdoptableSessions(serverConfig.value.stateDir)
+        : undefined;
+    if (adoptable !== undefined) {
+      const swept = yield* Effect.sync(() => adoptable.sweep());
+      if (swept.live + swept.stopped + swept.removed > 0) {
+        yield* Effect.logInfo("orchestration-v2.claude-adoptable-sessions", swept);
+      }
+    }
     const hostEnvironment = yield* HostProcess.Environment;
     const portDiscovery = yield* PortScanner.PortDiscovery;
     const processRunner = yield* ProcessRunner.make();
@@ -1797,15 +1816,46 @@ export const layerQueryRunner: Layer.Layer<
       };
       // The SDK can prepend a scope wrapper to native binaries; script entries run through node.
       const binaryPath = queryOptions.pathToClaudeCodeExecutable;
+      const nativeBinary =
+        binaryPath !== undefined && !CLAUDE_SCRIPT_EXTENSIONS.some((ext) => binaryPath.endsWith(ext));
+      // Medula: a CLI the previous server left running for this session is
+      // attached as it is; otherwise the CLI starts behind the adoptable shim.
+      const claudeSessionId = queryOptions.resume ?? queryOptions.sessionId;
+      const adoptableSessions =
+        adoptable !== undefined && nativeBinary && queryOptions.spawnClaudeCodeProcess === undefined
+          ? adoptable
+          : undefined;
+      const found =
+        adoptableSessions === undefined
+          ? undefined
+          : yield* Effect.sync(() =>
+              adoptableSessions.findAdoptable(input.threadId, claudeSessionId),
+            );
+      const adoptableLaunch =
+        adoptableSessions === undefined || found !== undefined
+          ? undefined
+          : yield* Effect.try({
+              try: () => adoptableSessions.prepare(input.threadId, claudeSessionId),
+              catch: (cause) => queryRunnerError(cause, "prepareAdoptableSession"),
+            });
+      if (found !== undefined) {
+        yield* Effect.logInfo("orchestration-v2.claude-session-adopted", {
+          threadId: input.threadId,
+          pid: found.state.pid,
+          offset: found.state.offset,
+        });
+      }
       const launch =
-        binaryPath === undefined || CLAUDE_SCRIPT_EXTENSIONS.some((ext) => binaryPath.endsWith(ext))
+        !nativeBinary || found !== undefined
           ? undefined
           : yield* agentScope.wrap({
-              command: binaryPath,
-              args: [],
+              command: adoptableLaunch?.command ?? binaryPath,
+              args: adoptableLaunch === undefined ? [] : [...adoptableLaunch.args, binaryPath],
               name: "claude",
               threadId: input.threadId,
               env: queryOptions.env,
+              // The next server adopts it, so its own startup must not stop it.
+              survivesRestart: adoptableLaunch !== undefined,
             });
       const options =
         launch === undefined || launch.args.length === 0
@@ -1829,8 +1879,12 @@ export const layerQueryRunner: Layer.Layer<
         stderrTail = (stderrTail + text).slice(-CLAUDE_STDERR_TAIL_LENGTH);
       };
       let descendants: ReturnType<typeof trackDescendants> | undefined;
-      const spawnProcess =
-        options.spawnClaudeCodeProcess ??
+      const spawnProcess: (spawnOptions: ClaudeSpawnOptions) => ClaudeSpawnedProcess =
+        found !== undefined && adoptableSessions !== undefined
+          ? () => adoptableSessions.adopt(found)
+          : adoptableLaunch !== undefined
+            ? adoptableLaunch.spawn
+            : (options.spawnClaudeCodeProcess ??
         ((spawnOptions: ClaudeSpawnOptions) => {
           if (platform !== "win32") {
             // Node can report "exit" before it has read the stderr the CLI wrote.
@@ -1858,7 +1912,7 @@ export const layerQueryRunner: Layer.Layer<
           });
           child.stderr.setEncoding("utf8").on("data", (chunk: string) => options.stderr?.(chunk));
           return child;
-        });
+        }));
       let spawnedProcess: ClaudeSpawnedProcess | undefined;
       let processExited = false;
       let processExit: Promise<void> | undefined;
@@ -5012,9 +5066,14 @@ function toSessionPermissionUpdates(
   ];
 }
 
+/**
+ * Waits for the user's answer. With `timeoutMs` (medula) an unanswered prompt
+ * is declined after that long, so a prompt nobody sees cannot hold the turn.
+ */
 export const awaitClaudeApprovalDecision = Effect.fn("awaitClaudeApprovalDecision")(function* (
   decision: Deferred.Deferred<ClaudeApprovalResponse>,
   signal: AbortSignal,
+  timeoutMs: number | null = null,
 ) {
   const cancellation = Effect.callback<ClaudeApprovalResponse>((resume) => {
     const abort = () => resume(Effect.succeed({ decision: "cancel" }));
@@ -5024,7 +5083,21 @@ export const awaitClaudeApprovalDecision = Effect.fn("awaitClaudeApprovalDecisio
     }
     return Effect.sync(() => signal.removeEventListener("abort", abort));
   });
-  return yield* Effect.raceFirst(Deferred.await(decision), cancellation);
+  const answered: Effect.Effect<ClaudeApprovalOutcome> = Effect.raceFirst(
+    Deferred.await(decision),
+    cancellation,
+  );
+  if (timeoutMs === null) {
+    return yield* answered;
+  }
+  const expired: Effect.Effect<ClaudeApprovalOutcome> = Effect.sleep(timeoutMs).pipe(
+    Effect.as({
+      decision: "decline",
+      feedback: approvalExpiredMessage(timeoutMs),
+      expired: true,
+    }),
+  );
+  return yield* Effect.raceFirst(answered, expired);
 });
 
 // MCP servers such as Computer Use ask on every call and expect the client to
@@ -5915,6 +5988,9 @@ type ClaudeApprovalResponse = {
   readonly decision: ProviderApprovalDecision;
   readonly feedback?: string;
 };
+
+/** The answer, or the decline the medula ceiling made when nobody answered. */
+type ClaudeApprovalOutcome = ClaudeApprovalResponse & { readonly expired?: boolean };
 
 type PendingClaudeRuntimeRequest =
   | {
@@ -10755,6 +10831,8 @@ export const makeClaudeAdapterV2 = Effect.fn("makeClaudeAdapterV2")(function* (
           // Finalization can yield to a replacement process; capture ownership and outcomes first.
           const subagents = yield* Ref.get(sessionSubagentsByTaskId);
           const buffered = (yield* Ref.get(wakeBuffers)).get(closedQuery.nativeThreadId)?.messages;
+          const stalledMessage =
+            cause === undefined ? undefined : inputStalledMessage(Cause.squash(cause));
           if (current === context) {
             yield* finalizeActiveTurn({
               context,
@@ -10767,6 +10845,8 @@ export const makeClaudeAdapterV2 = Effect.fn("makeClaudeAdapterV2")(function* (
                       cause: cause === undefined ? undefined : Cause.squash(cause),
                       ...(cause === undefined ? {} : claudeProcessExitFailure(cause)),
                       class: "transport_error",
+                      // Medula: a message the CLI never read says so in the chat.
+                      ...(stalledMessage === undefined ? {} : { message: stalledMessage }),
                     }),
                   }),
             });
@@ -13639,9 +13719,11 @@ export const makeClaudeAdapterV2 = Effect.fn("makeClaudeAdapterV2")(function* (
             { concurrency: 1 },
           );
 
-          const resolvedDecision = yield* awaitClaudeApprovalDecision(
+          const approvalTimeoutMs = readApprovalTimeoutMs();
+          const { expired, ...resolvedDecision } = yield* awaitClaudeApprovalDecision(
             decision,
             callbackOptions.signal,
+            approvalTimeoutMs,
           ).pipe(
             Effect.ensuring(
               Ref.update(pendingRuntimeRequests, (current) => {
@@ -13652,6 +13734,52 @@ export const makeClaudeAdapterV2 = Effect.fn("makeClaudeAdapterV2")(function* (
             ),
           );
           if (!(yield* Deferred.isDone(decision))) yield* cancelWithdrawnRequest(artifacts);
+
+          if (expired === true) {
+            const expiredAt = yield* DateTime.now;
+            yield* Effect.all(
+              [
+                emitProviderEvent({
+                  type: "runtime_request.updated",
+                  driver: CLAUDE_PROVIDER,
+                  runtimeRequest: {
+                    ...artifacts.request,
+                    status: "expired",
+                    responseCapability: {
+                      type: "not_resumable",
+                      reason: resolvedDecision.feedback ?? "approval expired",
+                    },
+                    resolvedAt: expiredAt,
+                  },
+                }),
+                emitProviderEvent({
+                  type: "node.updated",
+                  driver: CLAUDE_PROVIDER,
+                  node: { ...artifacts.node, status: "cancelled", completedAt: expiredAt },
+                }),
+                emitProviderEvent({
+                  type: "turn_item.updated",
+                  driver: CLAUDE_PROVIDER,
+                  turnItem: {
+                    ...artifacts.turnItem,
+                    status: "cancelled",
+                    completedAt: expiredAt,
+                    updatedAt: expiredAt,
+                  },
+                }),
+              ],
+              { concurrency: 1 },
+            );
+            yield* Effect.logWarning("Claude approval expired without an answer", {
+              threadId: context.input.threadId,
+              toolName,
+              timeoutMs: approvalTimeoutMs,
+            });
+            notifyApprovalExpired({
+              thread: String(context.input.threadId),
+              request: describeApprovalRequest(toolName, toolInput, prompt),
+            });
+          }
 
           return permissionResultFromDecision({
             toolName,

@@ -10,6 +10,7 @@ import { memo, type ReactNode, useLayoutEffect, useRef } from "react";
 
 import { cn } from "~/lib/utils";
 
+import { MedulaLinkButton } from "~/medula/MedulaLinkButton";
 import type { ThreadPanelPresentation } from "../../rightPanelLayout";
 import { PopoverCreateHandle, PopoverTrigger } from "../ui/popover";
 import { useMobileSidebarSheetMounted } from "../ui/sidebar";
@@ -37,6 +38,8 @@ export interface PanelLayoutControlsProps {
   onToggleTerminal: () => void;
   onToggleThreadPanel: () => void;
   onToggleRightPanel: () => void;
+  /** Shows the button that opens the Medula painel; it rides with the right-panel control. */
+  showMedulaLink?: boolean;
 }
 
 export const PanelLayoutControls = memo(function PanelLayoutControls({
@@ -57,6 +60,7 @@ export const PanelLayoutControls = memo(function PanelLayoutControls({
   onToggleTerminal,
   onToggleThreadPanel,
   onToggleRightPanel,
+  showMedulaLink = false,
 }: PanelLayoutControlsProps) {
   const gt = useGT();
   const threadPanelToggle = (
@@ -94,6 +98,7 @@ export const PanelLayoutControls = memo(function PanelLayoutControls({
       className="flex h-full shrink-0 items-center gap-1 [-webkit-app-region:no-drag]"
       data-panel-layout-controls
     >
+      {showRightPanelControl && showMedulaLink ? <MedulaLinkButton /> : null}
       {showThreadPanelControl ? threadPanelControl : null}
       {showTerminalControl ? (
         <SharedTooltipTrigger

@@ -1229,6 +1229,16 @@ function deriveTurnFolds(input: {
       }
       if (entry.kind === "work" && entry.entry.itemType === "notification") continue;
       if (entry.kind === "work" && entry.entry.questionAnswer !== undefined) continue;
+      // Every assistant text stays in view, even when the turn ends on a tool, unless the
+      // provider marked it as a status update (commentary or partial answer phase).
+      if (
+        entry.kind === "message" &&
+        entry.message.role === "assistant" &&
+        assistantTextIsReply(entry.message.text) &&
+        !assistantPhaseIsInterim(entry)
+      ) {
+        continue;
+      }
       hiddenEntryIds.add(entry.id);
     }
     if (hiddenEntryIds.size === 0) {
@@ -1547,6 +1557,91 @@ function runningSubagentsAtRunTail(entries: ReadonlyArray<TimelineEntry>, runId:
   return running;
 }
 
+const reasoningReplyEntries = new WeakMap<TimelineEntry, TimelineEntry>();
+
+function assistantPhaseIsInterim(entry: TimelineEntry): boolean {
+  if (entry.kind !== "message") return false;
+  const item = entry.projectedItem?.item;
+  return (
+    item?.type === "assistant_message" &&
+    (item.phase === "commentary" || item.phase === "partial_answer")
+  );
+}
+
+/** Assistant text with at least one word is something the user must see. */
+function assistantTextIsReply(text: string | null | undefined): boolean {
+  return /[\p{L}\p{N}]/u.test(text ?? "");
+}
+
+/**
+ * A Claude turn can end on a tool call (ScheduleWakeup) with its reply written
+ * in the thinking before it. Once the run settles, a last thought that comes
+ * after the run's last assistant text shows as the reply, not under "Worked for".
+ * Runs before tool-call visibility filtering, so zen mode keeps the reply too.
+ */
+function promoteReasoningReplies(
+  entries: ReadonlyArray<TimelineEntry>,
+  unsettledRunId: RunId | null,
+): ReadonlyArray<TimelineEntry> {
+  const lastReplyIndexByRunId = new Map<RunId, number>();
+  const lastThoughtIndexByRunId = new Map<RunId, number>();
+  for (const [index, entry] of entries.entries()) {
+    if (entry.kind === "message") {
+      if (
+        entry.message.role === "assistant" &&
+        entry.message.runId !== null &&
+        assistantTextIsReply(entry.message.text)
+      ) {
+        lastReplyIndexByRunId.set(entry.message.runId, index);
+      }
+      continue;
+    }
+    const runId = entry.kind === "work" ? (entry.entry.runId ?? null) : null;
+    if (
+      runId === null ||
+      runId === unsettledRunId ||
+      entry.kind !== "work" ||
+      entry.entry.itemType !== "reasoning" ||
+      // A thought superseded by a later entry has settled (see settleSupersededReasoning).
+      (entry.entry.toolLifecycleStatus === "inProgress" && index === entries.length - 1) ||
+      !entry.entry.detail?.trim()
+    ) {
+      continue;
+    }
+    lastThoughtIndexByRunId.set(runId, index);
+  }
+  const promotedIndexes = new Set(
+    [...lastThoughtIndexByRunId].flatMap(([runId, index]) =>
+      (lastReplyIndexByRunId.get(runId) ?? -1) > index ? [] : [index],
+    ),
+  );
+  if (promotedIndexes.size === 0) return entries;
+  return entries.map((entry, index) => {
+    if (!promotedIndexes.has(index) || entry.kind !== "work") return entry;
+    let promoted = reasoningReplyEntries.get(entry);
+    if (!promoted) {
+      const at = entry.entry.createdAt;
+      promoted = {
+        id: entry.id,
+        kind: "message",
+        createdAt: entry.createdAt,
+        message: {
+          id: `reasoning-reply:${entry.entry.id}` as MessageId,
+          role: "assistant",
+          text: entry.entry.detail?.trim() ?? "",
+          runId: entry.entry.runId ?? null,
+          streaming: false,
+          createdAt: at,
+          updatedAt: at,
+        },
+        ...(entry.attempt === undefined ? {} : { attempt: entry.attempt }),
+      };
+      reasoningReplyEntries.set(entry, promoted);
+    }
+    return promoted;
+  });
+}
+
 function timelineRowEntries(
   input: Pick<
     MessagesTimelineRowsInput,
@@ -1560,7 +1655,10 @@ function timelineRowEntries(
   >,
 ) {
   const visibility = input.toolCallVisibility ?? "showAll";
-  const entries = input.timelineEntries;
+  const entries = promoteReasoningReplies(
+    input.timelineEntries,
+    deriveUnsettledRunId(input.latestRun ?? null, input.runningRunId ?? null),
+  );
   let shown = entries;
   if (visibility === "zen") {
     const answering = input.isWorking && input.latestRun?.turnEnded !== true;

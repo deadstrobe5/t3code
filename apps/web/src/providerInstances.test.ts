@@ -16,6 +16,7 @@ import {
   resolveDefaultProviderModelSelection,
   resolveSelectableProviderInstance,
   shouldShowInstanceBadge,
+  sortProviderInstanceEntries,
 } from "./providerInstances";
 
 function provider(input: {
@@ -649,5 +650,35 @@ describe("provider icon metadata", () => {
     expect(restoredEntry?.acpRegistryAgentId).toBe("swe-agent");
     expect(restoredEntry?.acpRegistryIconUrl).toBe(iconUrl);
     expect(restoredEntry?.enabled).toBe(true);
+  });
+});
+
+describe("sortProviderInstanceEntries", () => {
+  it("keeps one lead per driver on top and the extra instances at the end", () => {
+    const ids = sortProviderInstanceEntries(
+      deriveProviderInstanceEntries([
+        provider({ provider: ProviderDriverKind.make("claudeAgent"), instanceId: "claudeAgent" }),
+        provider({ provider: ProviderDriverKind.make("claudeAgent"), instanceId: "claude_two" }),
+        provider({ provider: ProviderDriverKind.make("codex"), instanceId: "codex" }),
+        provider({ provider: ProviderDriverKind.make("claudeAgent"), instanceId: "claude_three" }),
+      ]),
+    ).map((entry) => entry.instanceId);
+    expect(ids).toEqual(["claudeAgent", "codex", "claude_two", "claude_three"]);
+  });
+
+  it("leads with the first enabled instance when the driver default is disabled", () => {
+    const ids = sortProviderInstanceEntries(
+      deriveProviderInstanceEntries([
+        provider({
+          provider: ProviderDriverKind.make("claudeAgent"),
+          instanceId: "claudeAgent",
+          enabled: false,
+        }),
+        provider({ provider: ProviderDriverKind.make("claudeAgent"), instanceId: "claude_two" }),
+        provider({ provider: ProviderDriverKind.make("codex"), instanceId: "codex" }),
+        provider({ provider: ProviderDriverKind.make("claudeAgent"), instanceId: "claude_three" }),
+      ]),
+    ).map((entry) => entry.instanceId);
+    expect(ids).toEqual(["claude_two", "codex", "claudeAgent", "claude_three"]);
   });
 });

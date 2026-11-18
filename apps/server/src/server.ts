@@ -96,6 +96,7 @@ import * as ProviderInstanceRegistryHydration from "./provider/ProviderInstanceR
 import * as ProviderHostPathWatcher from "./provider/ProviderHostPathWatcher.ts";
 import * as ProjectSettingsOverrideSweep from "./provider/ProjectSettingsOverrideSweep.ts";
 import * as TerminalManager from "./terminal/Manager.ts";
+import * as MedulaOperarios from "./medula/operariosRoutes.ts";
 import * as McpHttpServer from "./mcp/McpHttpServer.ts";
 import * as PeerForwarding from "./peer/PeerForwarding.ts";
 import * as RemoteDelegation from "./peer/RemoteDelegation.ts";
@@ -922,6 +923,9 @@ const layerMakeRoutes = Layer.mergeAll(
     ServerHttp.layerOtlpTracesProxyRoute,
     ServerHttp.layerDesktopReadinessProofRoute,
     ServerHttp.layerAssetRoute,
+    ServerHttp.layerMedulaWorkersRoute,
+    ServerHttp.layerMedulaWorkerLogRoute,
+    ServerHttp.layerMedulaResumeRoute,
     ServerHttp.layerAttachmentUploadRoute,
     GuestHttp.layer,
     LinkThreadHttp.layer,
@@ -940,6 +944,9 @@ const layerMakeRoutes = Layer.mergeAll(
   // Follows delegated tasks running in linked environments, including after a restart.
   Layer.effectDiscard(
     RemoteDelegation.RemoteDelegation.pipe(Effect.flatMap((remote) => remote.start())),
+  ),
+  MedulaOperarios.layer.pipe(
+    Layer.provide(ProviderAdapterRegistry.layerFromProviderInstanceRegistry),
   ),
 ).pipe(
   Layer.provide(

@@ -1,0 +1,10 @@
+# ws-live do fork (scripts/medula/LEIA-ME.md, «Modo dev»): gravar no servidor reinicia o servidor dev a quente
+# (as conversas continuam); o cliente web não precisa disto, o Vite recarrega-o sozinho.
+nome = "t3code"
+[watch]
+globs = ["apps/server/src/**/*.ts", "packages/*/src/**/*.ts"]
+ignore = ["**/*.test.ts", "**/*.testkit.ts"]
+[run]
+restart = "scripts/medula/dev.sh reinicia"
+[browser]
+url = "http://127.0.0.1:5780/"

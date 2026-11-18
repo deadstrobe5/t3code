@@ -44,13 +44,28 @@ function readDataUrlBlob(src: string): Blob {
   }
 }
 
-async function fetchMediaBlob(src: string): Promise<Blob> {
-  const response = await fetch(src).catch(() => null);
+/**
+ * Tries each source in order. Only a fetch that never got a response moves on: a freshly minted
+ * asset URL can point at a route the browser cannot reach while the URL already on screen still
+ * loads.
+ */
+async function fetchMediaBlob(sources: ReadonlyArray<string>): Promise<Blob> {
+  let response: Response | null = null;
+  for (const src of sources) {
+    response = await fetch(src).catch(() => null);
+    if (response) break;
+  }
   if (response?.ok) return response.blob();
   // An <img> can show media that fetch() may not read (CORS, CSP, cookies); desktop reads it natively.
   const desktop = typeof window === "undefined" ? undefined : window.desktopBridge;
-  const native =
-    desktop && /^https?:/i.test(src) ? await desktop.readMedia(src).catch(() => null) : null;
+  let native: Awaited<ReturnType<NonNullable<typeof desktop>["readMedia"]>> | null = null;
+  if (desktop) {
+    for (const src of sources) {
+      if (!/^https?:/i.test(src)) continue;
+      native = await desktop.readMedia(src).catch(() => null);
+      if (native) break;
+    }
+  }
   if (native && native.status >= 200 && native.status < 300) {
     return new Blob([new Uint8Array(native.data)], { type: native.mimeType });
   }
@@ -68,9 +83,15 @@ async function fetchMediaBlob(src: string): Promise<Blob> {
   );
 }
 
-async function readMediaBlob(src: string): Promise<Blob> {
-  if (/^data:/i.test(src)) return readDataUrlBlob(src);
-  const blob = await fetchMediaBlob(src);
+/** Accepts one URL or several to try in order (the fresh asset URL, then the one on screen). */
+type MediaSources = string | ReadonlyArray<string>;
+
+async function readMediaBlob(input: MediaSources): Promise<Blob> {
+  const sources = [...new Set(typeof input === "string" ? [input] : input)];
+  // Inline media decodes locally and never needs the network.
+  const inline = sources.find((src) => /^data:/i.test(src));
+  if (inline) return readDataUrlBlob(inline);
+  const blob = await fetchMediaBlob(sources);
   if (blob.type.split(";", 1)[0] === "text/html") {
     throw new Error(
       m(msg("This link returned a web page instead of media. Open the original URL.")),
@@ -79,8 +100,8 @@ async function readMediaBlob(src: string): Promise<Blob> {
   return blob;
 }
 
-export async function downloadMedia(src: string, name: string): Promise<void> {
-  const url = URL.createObjectURL(await readMediaBlob(src));
+export async function downloadMedia(sources: MediaSources, name: string): Promise<void> {
+  const url = URL.createObjectURL(await readMediaBlob(sources));
   try {
     const anchor = document.createElement("a");
     anchor.href = url;
@@ -91,8 +112,8 @@ export async function downloadMedia(src: string, name: string): Promise<void> {
   }
 }
 
-export async function readMediaPng(src: string): Promise<Blob> {
-  const blob = await readMediaBlob(src);
+export async function readMediaPng(sources: MediaSources): Promise<Blob> {
+  const blob = await readMediaBlob(sources);
   if (blob.type.split(";", 1)[0] === "image/png") return blob;
 
   const url = URL.createObjectURL(blob);

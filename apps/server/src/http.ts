@@ -45,6 +45,8 @@ import * as HttpApiBuilder from "effect/http-api/HttpApiBuilder";
 import { OtlpTracer, OtlpSerialization } from "effect/observability";
 
 import * as ServerConfig from "./config.ts";
+import * as MedulaWorkers from "./medula/workers.ts";
+import * as MedulaAutoResume from "./medula/autoResume.ts";
 import { ASSET_ROUTE_PREFIX, readMcpAppHtml, resolveAsset } from "./assets/AssetAccess.ts";
 import { sourceControlMediaResponse } from "./assets/sourceControlMediaResponse.ts";
 import { statMediaFile, streamMediaFile, type OpenMediaFile } from "./assets/MediaFile.ts";
@@ -516,6 +518,82 @@ export const withRootRequestSpans = <A, E, R>(layer: Layer.Layer<A, E, R>) =>
       ),
     ),
   );
+
+const medulaWorkersDir = () =>
+  process.env[MedulaWorkers.MEDULA_WORKERS_DIR_ENV]?.trim() || undefined;
+
+const noStore = { headers: { "cache-control": "no-store" } };
+
+export const layerMedulaWorkersRoute = HttpRouter.add(
+  "GET",
+  MedulaWorkers.MEDULA_WORKERS_PATH,
+  Effect.gen(function* () {
+    yield* authenticateRawRouteWithScope(AuthOrchestrationReadScope);
+    const dir = medulaWorkersDir();
+    if (dir === undefined) {
+      return HttpServerResponse.jsonUnsafe({ configured: false, workers: [] }, noStore);
+    }
+    const workers = yield* Effect.promise(() => MedulaWorkers.listWorkers(dir));
+    return HttpServerResponse.jsonUnsafe({ configured: true, workers }, noStore);
+  }).pipe(
+    Effect.catchTags({
+      EnvironmentAuthInvalidError: HttpServerRespondable.toResponse,
+      EnvironmentInternalError: HttpServerRespondable.toResponse,
+      EnvironmentScopeRequiredError: HttpServerRespondable.toResponse,
+    }),
+    Effect.withTracerEnabled(false),
+  ),
+);
+
+export const layerMedulaWorkerLogRoute = HttpRouter.add(
+  "GET",
+  MedulaWorkers.MEDULA_WORKER_LOG_PATH,
+  Effect.gen(function* () {
+    yield* authenticateRawRouteWithScope(AuthOrchestrationReadScope);
+    const dir = medulaWorkersDir();
+    const request = yield* HttpServerRequest.HttpServerRequest;
+    const url = HttpServerRequest.toURL(request);
+    const id = Option.isSome(url) ? url.value.searchParams.get("id") : null;
+    if (dir === undefined || id === null || !MedulaWorkers.isValidWorkerId(id)) {
+      return HttpServerResponse.text("Not Found", { status: 404 });
+    }
+    const log = yield* Effect.promise(() => MedulaWorkers.readWorkerLog(dir, id));
+    return log === null
+      ? HttpServerResponse.text("Not Found", { status: 404 })
+      : HttpServerResponse.jsonUnsafe(log, noStore);
+  }).pipe(
+    Effect.catchTags({
+      EnvironmentAuthInvalidError: HttpServerRespondable.toResponse,
+      EnvironmentInternalError: HttpServerRespondable.toResponse,
+      EnvironmentScopeRequiredError: HttpServerRespondable.toResponse,
+    }),
+    Effect.withTracerEnabled(false),
+  ),
+);
+
+export const layerMedulaResumeRoute = HttpRouter.add(
+  "GET",
+  MedulaAutoResume.MEDULA_RESUME_PATH,
+  Effect.gen(function* () {
+    yield* authenticateRawRouteWithScope(AuthOrchestrationReadScope);
+    const config = MedulaAutoResume.readMedulaResumeConfig(process.env);
+    return HttpServerResponse.jsonUnsafe(
+      {
+        enabled: config.enabled,
+        intervalSeconds: config.intervalMs / 1000,
+        threads: config.enabled ? MedulaAutoResume.resumeSnapshot() : [],
+      },
+      noStore,
+    );
+  }).pipe(
+    Effect.catchTags({
+      EnvironmentAuthInvalidError: HttpServerRespondable.toResponse,
+      EnvironmentInternalError: HttpServerRespondable.toResponse,
+      EnvironmentScopeRequiredError: HttpServerRespondable.toResponse,
+    }),
+    Effect.withTracerEnabled(false),
+  ),
+);
 
 export const layerAssetRoute = HttpRouter.add(
   "GET",

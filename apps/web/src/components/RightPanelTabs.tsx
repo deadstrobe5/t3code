@@ -125,6 +125,7 @@ import { PullRequestGlyph } from "~/components/pullRequest/pullRequestIcons";
 import { observeResize } from "~/lib/observeResize";
 import { surfaceShortcutKey } from "~/lib/surfaceShortcutKey";
 import { SharedTooltipTrigger } from "~/components/ui/shared-tooltip";
+import { OperariosIcon, useMedulaWorkersConfigured } from "~/medula/MedulaWorkers";
 
 export interface RightPanelTabsHandle {
   closeSelectedTabs: () => boolean;
@@ -176,6 +177,8 @@ export interface RightPanelTabsProps {
   onAddDevice: () => void;
   /** Absent where side chats are not offered. */
   onAddSideChat?: (() => void) | undefined;
+  /** Absent where the Operários surface has no place, such as the pull-request list. */
+  onAddOperarios?: () => void;
   browserAvailable: boolean;
   terminalAvailable: boolean;
   diffAvailable: boolean;
@@ -213,6 +216,7 @@ const SURFACE_DISABLED_REASONS = {
   pullRequests: msg("This thread has no linked items."),
   device: msg("Devices are only available from a thread."),
   sideChat: msg("Side chats start after the first message."),
+  operarios: msg("The server has no Medula workers directory."),
 } as const;
 
 // Closed keepMounted popups must stop blocking shortcuts once their exit transition ends.
@@ -238,6 +242,7 @@ const SURFACE_UNAVAILABLE_HINTS = {
   pullRequests: msg("No linked items available."),
   device: msg("Available from a thread."),
   sideChat: msg("Available after the first message."),
+  operarios: msg("No workers directory on the server."),
 } as const;
 
 type TabContextMenuAction =
@@ -358,6 +363,8 @@ function RightPanelEmptyState(props: {
   onAddDevice: () => void;
   /** Absent where side chats are not offered. */
   onAddSideChat?: (() => void) | undefined;
+  /** Absent where the Operários surface has no place, such as the pull-request list. */
+  onAddOperarios?: () => void;
   browserAvailable: boolean;
   terminalAvailable: boolean;
   diffAvailable: boolean;
@@ -371,6 +378,7 @@ function RightPanelEmptyState(props: {
   const gt = useGT();
   const messages = useMessages();
   const [highlight, setHighlight] = useState(-1);
+  const operariosConfigured = useMedulaWorkersConfigured();
 
   const actions = [
     {
@@ -444,6 +452,14 @@ function RightPanelEmptyState(props: {
           },
         ]
       : []),
+    {
+      label: msg("Operários"),
+      icon: OperariosIcon,
+      shortcut: "H",
+      available: operariosConfigured && props.onAddOperarios !== undefined,
+      disabledReason: messages(SURFACE_UNAVAILABLE_HINTS.operarios),
+      onClick: () => props.onAddOperarios?.(),
+    },
   ] as const;
 
   type SurfaceAction = (typeof actions)[number];
@@ -633,6 +649,8 @@ function surfaceTitle(
     case "issue":
       // A git host numbers its issues; a tracker with keys of its own, such as Linear, names them.
       return /^\d+$/.test(surface.key) ? `#${surface.key}` : surface.key;
+    case "operarios":
+      return resolve(msg("Operários"));
     case "device":
       return surface.title ?? surface.target?.name ?? resolve(msg("Device"));
     case "thread":
@@ -737,6 +755,8 @@ function SurfaceIcon({
       return <SideChatTabIcon environmentId={environmentId} threadId={surface.threadId} />;
     case "linked-thread":
       return <MessagesSquare className="size-3 shrink-0" />;
+    case "operarios":
+      return <OperariosIcon className="size-3 shrink-0" />;
     case "device":
       return surface.target?.platform === "ios" ? (
         <AppleIcon className="size-3 shrink-0" />
@@ -1267,6 +1287,7 @@ export function RightPanelTabs({ ref, ...props }: RightPanelTabsProps) {
     });
   };
 
+  const operariosConfigured = useMedulaWorkersConfigured();
   const addSurfaceActions = [
     {
       label: msg("Browser"),
@@ -1337,6 +1358,14 @@ export function RightPanelTabs({ ref, ...props }: RightPanelTabsProps) {
           },
         ]
       : []),
+    {
+      label: msg("Operários"),
+      icon: OperariosIcon,
+      shortcut: "H",
+      available: operariosConfigured && props.onAddOperarios !== undefined,
+      disabledReason: messages(SURFACE_DISABLED_REASONS.operarios),
+      onClick: () => props.onAddOperarios?.(),
+    },
   ] as const;
   const canAddSurface = addSurfaceActions.some((action) => action.available);
 
@@ -1830,6 +1859,7 @@ export function RightPanelTabs({ ref, ...props }: RightPanelTabsProps) {
             onAddPullRequests={props.onAddPullRequests}
             onAddDevice={props.onAddDevice}
             onAddSideChat={props.onAddSideChat}
+            {...(props.onAddOperarios ? { onAddOperarios: props.onAddOperarios } : {})}
             browserAvailable={props.browserAvailable}
             terminalAvailable={props.terminalAvailable}
             diffAvailable={props.diffAvailable}

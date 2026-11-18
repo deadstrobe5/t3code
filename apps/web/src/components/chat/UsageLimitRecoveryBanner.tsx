@@ -37,6 +37,8 @@ type RecoveryProps = {
   resetPassed?: boolean;
   displayPassed?: boolean;
   onChange: (recovery: OrchestrationV2LimitRecoveryUpdate) => Promise<void>;
+  /** Medula: «Quota gasta · retoma às HH:MM» when the server's auto-resume is on. */
+  medulaResumeTitle?: string | null;
 };
 
 function parseEpochMs(isoDate: string | null): number | null {
@@ -111,14 +113,18 @@ export function usageLimitRecoveryBannerItem(
           ? resolve(msg("Reset {time}", { time: formattedTime }))
           : resolve(msg("Resets {time}", { time: formattedTime }))
       : resolve(msg("Reset time unavailable; retry manually"));
+  // Medula: the server's auto-resume replaces the reset line with when the thread continues.
+  const description = props.medulaResumeTitle
+    ? "Retoma automática: a conversa continua sozinha quando a quota voltar."
+    : resetDescription;
   if (!chatGptLimit) {
     return {
       id: `usage-limit-recovery:${runId}`,
       variant: "warning",
       group: "environment",
       icon: <GaugeIcon />,
-      title: resolve(msg("Usage limit reached")),
-      description: resetDescription,
+      title: props.medulaResumeTitle ?? resolve(msg("Usage limit reached")),
+      description,
       actions: recoveryActions,
     };
   }
@@ -133,7 +139,7 @@ export function usageLimitRecoveryBannerItem(
       ? resolve(
           msg("You've reached your workspace's limit for using your ChatGPT plan in other apps."),
         )
-      : resetDescription,
+      : description,
     actions: (
       <>
         {recoveryActions}

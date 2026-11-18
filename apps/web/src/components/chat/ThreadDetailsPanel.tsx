@@ -45,6 +45,7 @@ import {
   THREAD_DETAILS_PANEL_LABEL_CLASS,
 } from "./threadDetailsPanelStyles";
 import { Menu, MenuPopup } from "../ui/menu";
+import { BackgroundActivityCard } from "../../medula/BackgroundActivityCard";
 
 interface ThreadDetailsPanelProps extends Pick<
   ComponentProps<typeof ThreadDetailsCard>,
@@ -312,13 +313,26 @@ export function ThreadDetailsPanel(props: ThreadDetailsPanelProps) {
                 />
               ) : null}
 
-              {density === "full" && !props.draftId && (visible.lineage || visible.sideChats) ? (
-                <ThreadRelationshipsPanel
-                  environmentId={props.environmentId}
-                  threadId={props.threadId}
-                  showLineage={visible.lineage}
-                  showSideChats={visible.sideChats}
-                />
+              {density === "full" && !props.draftId ? (
+                visible.lineage || visible.sideChats ? (
+                  <ThreadRelationshipsPanel
+                    environmentId={props.environmentId}
+                    threadId={props.threadId}
+                    showLineage={visible.lineage}
+                    showSideChats={visible.sideChats}
+                    beforePrevious={
+                      <BackgroundActivityCard
+                        environmentId={props.environmentId}
+                        threadId={props.threadId}
+                      />
+                    }
+                  />
+                ) : (
+                  <BackgroundActivityCard
+                    environmentId={props.environmentId}
+                    threadId={props.threadId}
+                  />
+                )
               ) : null}
 
               {visible.usage ? <ThreadDetailsUsage {...props.usage} /> : null}

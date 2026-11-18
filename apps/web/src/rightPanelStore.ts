@@ -32,6 +32,7 @@ const RIGHT_PANEL_KINDS = [
   "issue",
   "thread",
   "linked-thread",
+  "operarios",
 ] as const;
 export type RightPanelKind = (typeof RIGHT_PANEL_KINDS)[number];
 
@@ -87,6 +88,7 @@ export type RightPanelSurface =
       revealUrl?: string;
       detailTab?: PullRequestDetailTab;
     }
+  /** The thread's linked pull requests, one singleton tab beside any number of `pull-request` tabs. */
   | { id: "pull-requests"; kind: "pull-requests" }
   /**
    * An issue opened in the issues list's shared panel, or beside a thread. Like `pull-request`,
@@ -109,7 +111,9 @@ export type RightPanelSurface =
    */
   | ThreadSurface
   /** A linked environment's thread, read through `viaEnvironmentId`; it has no thread here. */
-  | LinkedThreadSurface;
+  | LinkedThreadSurface
+  /** Medula background workers; see `~/medula/MedulaWorkers`. */
+  | { id: "operarios"; kind: "operarios" };
 
 export type ThreadSurface = { id: `thread:${string}`; kind: "thread"; threadId: ThreadId };
 
@@ -301,6 +305,8 @@ const singletonSurface = (
       return { id: "pull-requests", kind };
     case "device":
       return { id: "device", kind };
+    case "operarios":
+      return { id: "operarios", kind };
   }
 };
 
